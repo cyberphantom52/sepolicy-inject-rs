@@ -16,6 +16,7 @@ fn main() {
         .std("c++20")
         .include(&libsepol_include)
         .include("src/ffi")
+        .file("src/ffi/sepolicy.cpp")
         .flag("-Wno-unused-parameter")
         .compile("sepolicy_ffi");
 
