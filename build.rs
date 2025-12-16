@@ -2,10 +2,27 @@ use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let libsepol_include = manifest_dir
+        .join("selinux")
+        .join("libsepol")
+        .join("include");
 
+    // Build libsepol
     build_libsepol();
 
+    // Build the FFI Bridge
+    cxx_build::bridge("src/ffi/mod.rs")
+        .std("c++20")
+        .include(&libsepol_include)
+        .include("src/ffi")
+        .flag("-Wno-unused-parameter")
+        .compile("sepolicy_ffi");
+
+    // Link libraries
     println!("cargo:rustc-link-lib=static=libsepol");
+    println!("cargo:rustc-link-lib=static=sepolicy_ffi");
+    println!("cargo:rustc-link-lib=stdc++");
 }
 
 fn build_libsepol() {
