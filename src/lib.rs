@@ -1,1 +1,1 @@
-// sepolicy-rs
+mod ffi;
