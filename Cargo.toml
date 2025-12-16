@@ -12,3 +12,8 @@ name = "sepolicy"
 path = "src/lib.rs"
 
 [dependencies]
+cxx = "1.0.192"
+
+[build-dependencies]
+cxx-build = "1.0.192"
+cxx-gen = "0.7.192"
