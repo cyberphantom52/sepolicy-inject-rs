@@ -15,5 +15,6 @@ path = "src/lib.rs"
 cxx = "1.0.192"
 
 [build-dependencies]
+cc = "1.2.49"
 cxx-build = "1.0.192"
 cxx-gen = "0.7.192"
