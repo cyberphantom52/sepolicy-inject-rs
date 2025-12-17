@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <rust/cxx.h>
 #include <memory>
 
@@ -33,6 +34,9 @@ public:
     rust::Vec<rust::String> genfs_ctx() const;
 
     rust::Vec<rust::String> rules() const;
+
+    std::optional<std::string> type_name(uint32_t v) const;
+    std::optional<std::string> class_name(uint32_t v) const;
 };
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;
