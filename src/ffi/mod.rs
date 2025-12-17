@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_from_file_opens_policy() {
+    fn test_sepolicy_from_file() {
         // Prefer env var so CI can inject the right path.
         let path = fixture_path("precompiled_sepolicy");
         assert!(
@@ -93,5 +93,56 @@ mod tests {
         );
 
         let _ = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+    }
+
+    #[test]
+    fn test_sepolicy_get_attributes() {
+        let path = fixture_path("precompiled_sepolicy");
+        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+
+        let attributes = sepolicy.attributes();
+        assert!(!attributes.is_empty(), "no attributes found in sepolicy");
+    }
+
+    #[test]
+    fn test_sepolicy_get_types() {
+        let path = fixture_path("precompiled_sepolicy");
+        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+
+        let types = sepolicy.types();
+        assert!(!types.is_empty(), "no types found in sepolicy");
+    }
+
+    #[test]
+    fn test_sepolicy_get_avtabs() {
+        let path = fixture_path("precompiled_sepolicy");
+        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+
+        let avtabs = sepolicy.avtabs();
+        assert!(!avtabs.is_empty(), "no avtabs found in sepolicy");
+    }
+
+    #[test]
+    fn test_sepolicy_get_transitions() {
+        let path = fixture_path("precompiled_sepolicy");
+        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+
+        let transitions = sepolicy.transitions();
+        assert!(
+            !transitions.is_empty(),
+            "no type transitions found in sepolicy"
+        );
+    }
+
+    #[test]
+    fn test_sepolicy_get_genfs_contexts() {
+        let path = fixture_path("precompiled_sepolicy");
+        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
+
+        let genfs_contexts = sepolicy.genfs_contexts();
+        assert!(
+            !genfs_contexts.is_empty(),
+            "no genfs contexts found in sepolicy"
+        );
     }
 }

@@ -118,7 +118,7 @@ rust::Vec<rust::String> SePolicyImpl::avtabs() const {
         switch (spec) {
             case AVTAB_ALLOWED:              return "allow";
             case AVTAB_AUDITALLOW:           return "auditallow";
-            case AVTAB_AUDITDENY:             return "dontaudit";
+            case AVTAB_AUDITDENY:            return "dontaudit";
             case AVTAB_TRANSITION:           return "type_transition";
             case AVTAB_MEMBER:               return "type_member";
             case AVTAB_CHANGE:               return "type_change";
