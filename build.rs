@@ -2,6 +2,10 @@ use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/ffi/file.hpp");
+    println!("cargo:rerun-if-changed=src/ffi/sepolicy.cpp");
+    println!("cargo:rerun-if-changed=src/ffi/sepolicy.hpp");
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let libsepol_include = manifest_dir
         .join("selinux")
