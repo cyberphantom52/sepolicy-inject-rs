@@ -12,6 +12,7 @@ mod ffi {
 
         fn attributes_impl(impl_: &SePolicyImpl) -> Vec<String>;
         fn types_impl(impl_: &SePolicyImpl) -> Vec<String>;
+        fn avtabs_impl(impl_: &SePolicyImpl) -> Vec<String>;
         fn type_transitions_impl(impl_: &SePolicyImpl) -> Vec<String>;
         fn genfs_ctx_impl(impl_: &SePolicyImpl) -> Vec<String>;
     }
@@ -45,7 +46,7 @@ impl SePolicy {
     }
 
     fn avtabs(&self) -> Vec<String> {
-        todo!()
+        ffi::avtabs_impl(&self.inner)
     }
 
     fn transitions(&self) -> Vec<String> {
@@ -61,7 +62,7 @@ impl SePolicy {
 
         out.extend(self.attributes());
         out.extend(self.types());
-        // out.extend(self.avtabs());
+        out.extend(self.avtabs());
         out.extend(self.transitions());
         out.extend(self.genfs_contexts());
 

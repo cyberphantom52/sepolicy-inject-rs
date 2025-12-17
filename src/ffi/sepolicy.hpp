@@ -28,6 +28,7 @@ public:
 
     rust::Vec<rust::String> attributes() const;
     rust::Vec<rust::String> types() const;
+    rust::Vec<rust::String> avtabs() const;
     rust::Vec<rust::String> type_transitions() const;
     rust::Vec<rust::String> genfs_ctx() const;
 
@@ -37,6 +38,7 @@ public:
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;
 rust::Vec<rust::String> attributes_impl(const SePolicyImpl &impl) noexcept;
 rust::Vec<rust::String> types_impl(const SePolicyImpl &impl) noexcept;
+rust::Vec<rust::String> avtabs_impl(const SePolicyImpl &impl) noexcept;
 rust::Vec<rust::String> type_transitions_impl(const SePolicyImpl &impl) noexcept;
 rust::Vec<rust::String> genfs_ctx_impl(const SePolicyImpl &impl) noexcept;
 
