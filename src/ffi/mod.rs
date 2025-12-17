@@ -9,6 +9,11 @@ mod ffi {
         type SePolicyImpl;
 
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
+
+        fn attributes_impl(impl_: &SePolicyImpl) -> Vec<String>;
+        fn types_impl(impl_: &SePolicyImpl) -> Vec<String>;
+        fn type_transitions_impl(impl_: &SePolicyImpl) -> Vec<String>;
+        fn genfs_ctx_impl(impl_: &SePolicyImpl) -> Vec<String>;
     }
 }
 
@@ -29,6 +34,38 @@ impl SePolicy {
         } else {
             Some(SePolicy { inner })
         }
+    }
+
+    fn attributes(&self) -> Vec<String> {
+        ffi::attributes_impl(&self.inner)
+    }
+
+    fn types(&self) -> Vec<String> {
+        ffi::types_impl(&self.inner)
+    }
+
+    fn avtabs(&self) -> Vec<String> {
+        todo!()
+    }
+
+    fn transitions(&self) -> Vec<String> {
+        ffi::type_transitions_impl(&self.inner)
+    }
+
+    fn genfs_contexts(&self) -> Vec<String> {
+        ffi::genfs_ctx_impl(&self.inner)
+    }
+
+    pub fn rules(&self) -> Vec<String> {
+        let mut out = Vec::new();
+
+        out.extend(self.attributes());
+        out.extend(self.types());
+        // out.extend(self.avtabs());
+        out.extend(self.transitions());
+        out.extend(self.genfs_contexts());
+
+        out
     }
 }
 
