@@ -5,12 +5,11 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi/file.hpp");
     println!("cargo:rerun-if-changed=src/ffi/sepolicy.cpp");
     println!("cargo:rerun-if-changed=src/ffi/sepolicy.hpp");
+    println!("cargo:rerun-if-changed=src/ffi/mmap.hpp");
+    println!("cargo:rerun-if-changed=src/ffi/mmap.hpp");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let libsepol_include = manifest_dir
-        .join("selinux")
-        .join("libsepol")
-        .join("include");
+    let libsepol_dir = manifest_dir.join("selinux").join("libsepol");
 
     // Build libsepol
     build_libsepol();
@@ -18,8 +17,10 @@ fn main() {
     // Build the FFI Bridge
     cxx_build::bridge("src/ffi/mod.rs")
         .std("c++20")
-        .include(&libsepol_include)
+        .include(&libsepol_dir.join("include"))
+        .include(&libsepol_dir.join("cil").join("include"))
         .include("src/ffi")
+        .file("src/ffi/mmap.cpp")
         .file("src/ffi/sepolicy.cpp")
         .flag("-Wno-unused-parameter")
         .compile("sepolicy_ffi");
