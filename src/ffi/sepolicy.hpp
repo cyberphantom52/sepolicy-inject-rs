@@ -22,6 +22,18 @@ int context_to_string(
         char **result, size_t * result_len);
 __END_DECLS
 
+// sepolicy paths
+#define PLAT_POLICY_DIR     "/system/etc/selinux/"
+#define VEND_POLICY_DIR     "/vendor/etc/selinux/"
+#define PROD_POLICY_DIR     "/product/etc/selinux/"
+#define ODM_POLICY_DIR      "/odm/etc/selinux/"
+#define SYSEXT_POLICY_DIR   "/system_ext/etc/selinux/"
+#define SPLIT_PLAT_CIL      PLAT_POLICY_DIR "plat_sepolicy.cil"
+
+// selinuxfs paths
+#define SELINUX_MNT         "/sys/fs/selinux"
+#define SELINUX_VERSION     SELINUX_MNT "/policyvers"
+
 class SePolicyImpl {
     policydb *db;
     mutable std::unordered_map<uint32_t, std::vector<const char *>> class_perm_cache;
@@ -42,6 +54,9 @@ public:
 };
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;
+std::unique_ptr<SePolicyImpl> from_split_impl() noexcept;
+std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept;
+std::unique_ptr<SePolicyImpl> from_data_impl(rust::Slice<const uint8_t> data) noexcept;
 
 static auto specified_to_name = [](uint32_t spec) -> std::optional<std::string> {
     switch (spec) {
@@ -82,3 +97,15 @@ template <typename F>
 static void for_each_avtab(avtab_t *avtab, const F &fn) {
     for_each_hash(avtab->htable, avtab->nslot, fn);
 }
+
+//
+template <class Func>
+class run_finally {
+    run_finally(const run_finally &) = delete;
+    run_finally &operator=(const run_finally &) = delete;
+public:
+    explicit run_finally(Func &&fn) : fn(std::move(fn)) {}
+    ~run_finally() { fn(); }
+private:
+    Func fn;
+};

@@ -1,9 +1,13 @@
+#include <fcntl.h>
 #include "file.hpp"
 #include "sepolicy.hpp"
 #include <sepol/policydb/policydb.h>
 #include <sepol/policydb/ebitmap.h>
 #include <sstream>
 #include "sepolicy-inject-rs/src/ffi/mod.rs.h"
+#include "mmap.hpp"
+
+#include <cil/cil.h>
 
 static std::string to_string(rust::Str str) {
     return std::string(str.data(), str.size());
@@ -65,7 +69,197 @@ std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
         return nullptr;
     }
 
-    return {std::make_unique<SePolicyImpl>(db)};
+    return std::make_unique<SePolicyImpl>(db);
+}
+
+std::unique_ptr<SePolicyImpl> from_data_impl(rust::Slice<const uint8_t> data) noexcept {
+    policy_file policy_file;
+    policy_file_init(&policy_file);
+    policy_file.data = (char *) data.data();
+    policy_file.len = data.size();
+    policy_file.type = PF_USE_MEMORY;
+
+    policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
+    if (policydb_init(db) || policydb_read(db, &policy_file, 0)) {
+        free(db);
+        return nullptr;
+    }
+
+    return std::make_unique<SePolicyImpl>(db);
+}
+
+#define SHALEN 64
+static bool read_exact(const char *path, char *buf, size_t len) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+
+    ssize_t total = 0;
+    while (total < (ssize_t)len) {
+        ssize_t r = read(fd, buf + total, len - total);
+        if (r <= 0) {
+            close(fd);
+            return false;
+        }
+        total += r;
+    }
+
+    close(fd);
+    return true;
+}
+
+static bool cmp_sha256(const char *a, const char *b) {
+    char id_a[SHALEN] = {0};
+    char id_b[SHALEN] = {0};
+
+    if (!read_exact(a, id_a, SHALEN))
+        return false;
+
+    if (!read_exact(b, id_b, SHALEN))
+        return false;
+
+    return memcmp(id_a, id_b, SHALEN) == 0;
+}
+
+static bool check_precompiled(const char *precompiled) {
+    bool ok = false;
+    const char *actual_sha;
+    char compiled_sha[128];
+
+    actual_sha = PLAT_POLICY_DIR "plat_and_mapping_sepolicy.cil.sha256";
+    if (access(actual_sha, R_OK) == 0) {
+        ok = true;
+        sprintf(compiled_sha, "%s.plat_and_mapping.sha256", precompiled);
+        if (!cmp_sha256(actual_sha, compiled_sha))
+            return false;
+    }
+
+    actual_sha = PLAT_POLICY_DIR "plat_sepolicy_and_mapping.sha256";
+    if (access(actual_sha, R_OK) == 0) {
+        ok = true;
+        sprintf(compiled_sha, "%s.plat_sepolicy_and_mapping.sha256", precompiled);
+        if (!cmp_sha256(actual_sha, compiled_sha))
+            return false;
+    }
+
+    actual_sha = PROD_POLICY_DIR "product_sepolicy_and_mapping.sha256";
+    if (access(actual_sha, R_OK) == 0) {
+        ok = true;
+        sprintf(compiled_sha, "%s.product_sepolicy_and_mapping.sha256", precompiled);
+        if (!cmp_sha256(actual_sha, compiled_sha))
+            return false;
+    }
+
+    actual_sha = SYSEXT_POLICY_DIR "system_ext_sepolicy_and_mapping.sha256";
+    if (access(actual_sha, R_OK) == 0) {
+        ok = true;
+        sprintf(compiled_sha, "%s.system_ext_sepolicy_and_mapping.sha256", precompiled);
+        if (!cmp_sha256(actual_sha, compiled_sha))
+            return false;
+    }
+
+    return ok;
+}
+
+std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
+    const char *odm_pre = ODM_POLICY_DIR "precompiled_sepolicy";
+    const char *vend_pre = VEND_POLICY_DIR "precompiled_sepolicy";
+    if (access(odm_pre, R_OK) == 0 && check_precompiled(odm_pre))
+        return from_file_impl(odm_pre);
+    else if (access(vend_pre, R_OK) == 0 && check_precompiled(vend_pre))
+        return from_file_impl(vend_pre);
+    else
+        return compile_split_impl();
+}
+
+static void load_cil(struct cil_db *db, const char *file) {
+    mmap_data d(file);
+    cil_add_file(db, file, (const char *) d.data(), d.size());
+}
+
+std::unique_ptr<SePolicyImpl>  compile_split_impl() noexcept {
+    char path[128], plat_ver[10];
+    cil_db_t *db = nullptr;
+    sepol_policydb_t *pdb = nullptr;
+    FILE *f;
+    int policy_ver;
+    const char *cil_file;
+
+    cil_db_init(&db);
+    run_finally fin([db_ptr = &db]{ cil_db_destroy(db_ptr); });
+    cil_set_mls(db, 1);
+    cil_set_multiple_decls(db, 1);
+    cil_set_disable_neverallow(db, 1);
+    cil_set_target_platform(db, SEPOL_TARGET_SELINUX);
+    cil_set_attrs_expand_generated(db, 1);
+
+    f = fopen(SELINUX_VERSION, "re");
+    if (!f) return nullptr;
+    fscanf(f, "%d", &policy_ver);
+    fclose(f);
+    cil_set_policy_version(db, policy_ver);
+
+    // Get mapping version
+    f = fopen(VEND_POLICY_DIR "plat_sepolicy_vers.txt", "re");
+    if (!f) return nullptr;
+    fscanf(f, "%s", plat_ver);
+    fclose(f);
+
+    // plat
+    load_cil(db, SPLIT_PLAT_CIL);
+
+    sprintf(path, PLAT_POLICY_DIR "mapping/%s.cil", plat_ver);
+    load_cil(db, path);
+
+    sprintf(path, PLAT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
+    if (access(path, R_OK) == 0)
+        load_cil(db, path);
+
+    // system_ext
+    sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.cil", plat_ver);
+    if (access(path, R_OK) == 0)
+        load_cil(db, path);
+
+    sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
+    if (access(path, R_OK) == 0)
+        load_cil(db, path);
+
+    cil_file = SYSEXT_POLICY_DIR "system_ext_sepolicy.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    // product
+    sprintf(path, PROD_POLICY_DIR "mapping/%s.cil", plat_ver);
+    if (access(path, R_OK) == 0)
+        load_cil(db, path);
+
+    cil_file = PROD_POLICY_DIR "product_sepolicy.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    // vendor
+    cil_file = VEND_POLICY_DIR "nonplat_sepolicy.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    cil_file = VEND_POLICY_DIR "plat_pub_versioned.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    cil_file = VEND_POLICY_DIR "vendor_sepolicy.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    // odm
+    cil_file = ODM_POLICY_DIR "odm_sepolicy.cil";
+    if (access(cil_file, R_OK) == 0)
+        load_cil(db, cil_file);
+
+    if (cil_compile(db))
+        return {};
+    if (cil_build_policydb(db, &pdb))
+        return {};
+    return std::make_unique<SePolicyImpl>(&pdb->p);
 }
 
 rust::Vec<rust::String> SePolicy::attributes() const noexcept {

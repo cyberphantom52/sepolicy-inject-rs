@@ -19,6 +19,9 @@ mod ffi {
         fn genfs_contexts(self: &SePolicy) -> Vec<String>;
 
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
+        fn from_split_impl() -> UniquePtr<SePolicyImpl>;
+        fn compile_split_impl() -> UniquePtr<SePolicyImpl>;
+        fn from_data_impl(data: &[u8]) -> UniquePtr<SePolicyImpl>;
     }
 }
 
@@ -30,6 +33,33 @@ impl SePolicy {
             .to_str()
             .expect("path contains invalid UTF-8 characters");
         let inner = ffi::from_file_impl(path_str);
+        if inner.is_null() {
+            None
+        } else {
+            Some(SePolicy { inner })
+        }
+    }
+
+    pub fn from_split() -> Option<Self> {
+        let inner = ffi::from_split_impl();
+        if inner.is_null() {
+            None
+        } else {
+            Some(SePolicy { inner })
+        }
+    }
+
+    pub fn compile_split() -> Option<Self> {
+        let inner = ffi::compile_split_impl();
+        if inner.is_null() {
+            None
+        } else {
+            Some(SePolicy { inner })
+        }
+    }
+
+    pub fn from_data(data: &[u8]) -> Option<Self> {
+        let inner = ffi::from_data_impl(data);
         if inner.is_null() {
             None
         } else {
