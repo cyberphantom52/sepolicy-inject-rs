@@ -28,10 +28,18 @@ fn main() {
     // Link libraries
     println!("cargo:rustc-link-lib=static=libsepol");
     println!("cargo:rustc-link-lib=static=sepolicy_ffi");
-    println!("cargo:rustc-link-lib=stdc++");
+
+    // Android NDK uses libc++ (c++), not libstdc++ (stdc++)
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("android") {
+        println!("cargo:rustc-link-lib=c++_static");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
 }
 
 fn build_libsepol() {
+    let target = std::env::var("TARGET").unwrap();
     let mut libsepol_build = cc::Build::new();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let libsepol_dir = manifest_dir.join("selinux").join("libsepol");
@@ -42,8 +50,11 @@ fn build_libsepol() {
         .include(&libsepol_dir.join("cil").join("include"))
         .include(&libsepol_dir.join("src"))
         .include(&libsepol_dir.join("cil").join("src"))
-        .flag("-Wno-unused-but-set-variable")
-        .define("HAVE_REALLOCARRAY", None);
+        .flag("-Wno-unused-but-set-variable");
+
+    if !target.contains("android") {
+        libsepol_build.define("HAVE_REALLOCARRAY", None);
+    }
 
     let srcs = [
         "src/assertion.c",
