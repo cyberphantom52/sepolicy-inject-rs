@@ -1,25 +1,25 @@
-use cxx::UniquePtr;
+pub use ffi::*;
 use std::path::Path;
 
 #[cxx::bridge]
 mod ffi {
+    struct SePolicy {
+        inner: UniquePtr<SePolicyImpl>,
+    }
+
     unsafe extern "C++" {
         include!("sepolicy-inject-rs/src/ffi/sepolicy.hpp");
 
         type SePolicyImpl;
 
+        fn attributes(self: &SePolicy) -> Vec<String>;
+        fn types(self: &SePolicy) -> Vec<String>;
+        fn avtabs(self: &SePolicy) -> Vec<String>;
+        fn transitions(self: &SePolicy) -> Vec<String>;
+        fn genfs_contexts(self: &SePolicy) -> Vec<String>;
+
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
-
-        fn attributes_impl(impl_: &SePolicyImpl) -> Vec<String>;
-        fn types_impl(impl_: &SePolicyImpl) -> Vec<String>;
-        fn avtabs_impl(impl_: &SePolicyImpl) -> Vec<String>;
-        fn type_transitions_impl(impl_: &SePolicyImpl) -> Vec<String>;
-        fn genfs_ctx_impl(impl_: &SePolicyImpl) -> Vec<String>;
     }
-}
-
-pub struct SePolicy {
-    inner: UniquePtr<ffi::SePolicyImpl>,
 }
 
 impl SePolicy {
@@ -35,26 +35,6 @@ impl SePolicy {
         } else {
             Some(SePolicy { inner })
         }
-    }
-
-    fn attributes(&self) -> Vec<String> {
-        ffi::attributes_impl(&self.inner)
-    }
-
-    fn types(&self) -> Vec<String> {
-        ffi::types_impl(&self.inner)
-    }
-
-    fn avtabs(&self) -> Vec<String> {
-        ffi::avtabs_impl(&self.inner)
-    }
-
-    fn transitions(&self) -> Vec<String> {
-        ffi::type_transitions_impl(&self.inner)
-    }
-
-    fn genfs_contexts(&self) -> Vec<String> {
-        ffi::genfs_ctx_impl(&self.inner)
     }
 
     pub fn rules(&self) -> Vec<String> {

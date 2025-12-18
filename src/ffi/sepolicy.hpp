@@ -1,8 +1,8 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <rust/cxx.h>
-#include <memory>
 
 #include <sepol/policydb/policydb.h>
 #include <string>
@@ -25,6 +25,7 @@ __END_DECLS
 class SePolicyImpl {
     policydb *db;
     mutable std::unordered_map<uint32_t, std::vector<const char *>> class_perm_cache;
+    friend struct SePolicy;
 
     std::optional<std::string> type_name(uint32_t v) const;
     std::optional<std::string> class_name(uint32_t v) const;
@@ -38,21 +39,9 @@ class SePolicyImpl {
 public:
     explicit SePolicyImpl(policydb *db) : db(db) {}
     ~SePolicyImpl();
-
-    rust::Vec<rust::String> attributes() const;
-    rust::Vec<rust::String> types() const;
-    rust::Vec<rust::String> avtabs() const;
-    rust::Vec<rust::String> type_transitions() const;
-    rust::Vec<rust::String> genfs_ctx() const;
 };
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;
-rust::Vec<rust::String> attributes_impl(const SePolicyImpl &impl) noexcept;
-rust::Vec<rust::String> types_impl(const SePolicyImpl &impl) noexcept;
-rust::Vec<rust::String> avtabs_impl(const SePolicyImpl &impl) noexcept;
-rust::Vec<rust::String> type_transitions_impl(const SePolicyImpl &impl) noexcept;
-rust::Vec<rust::String> genfs_ctx_impl(const SePolicyImpl &impl) noexcept;
-
 
 static auto specified_to_name = [](uint32_t spec) -> std::optional<std::string> {
     switch (spec) {
