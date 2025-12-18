@@ -12,6 +12,7 @@ name = "sepolicy"
 path = "src/lib.rs"
 
 [dependencies]
+clap = { version = "4.5.53", features = ["derive", "string"] }
 cxx = "1.0.192"
 
 [build-dependencies]
