@@ -3,7 +3,6 @@
 #include <sepol/policydb/policydb.h>
 #include <sepol/policydb/ebitmap.h>
 #include <sstream>
-#include "rust/cxx.h"
 #include "sepolicy-inject-rs/src/ffi/mod.rs.h"
 
 static std::string to_string(rust::Str str) {
@@ -66,17 +65,17 @@ std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
         return nullptr;
     }
 
-    return std::make_unique<SePolicyImpl>(db);
+    return {std::make_unique<SePolicyImpl>(db)};
 }
 
-rust::Vec<rust::String> SePolicyImpl::attributes() const {
+rust::Vec<rust::String> SePolicy::attributes() const noexcept {
     rust::Vec<rust::String> out;
 
-    for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
+    for_each_hashtab(inner->db->p_types.table, [&](hashtab_ptr_t node) {
         auto type = static_cast<type_datum_t *>(node->datum);
         if (type->flavor != TYPE_ATTRIB) return;
 
-        if (auto name = this->type_name(type->s.value)) {
+        if (auto name = inner->type_name(type->s.value)) {
             out.push_back(rust::String(std::string("attribute ") + *name));
         }
     });
@@ -84,17 +83,17 @@ rust::Vec<rust::String> SePolicyImpl::attributes() const {
     return out;
 }
 
-rust::Vec<rust::String> SePolicyImpl::types() const {
+rust::Vec<rust::String> SePolicy::types() const noexcept {
     rust::Vec<rust::String> out;
 
-    for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
+    for_each_hashtab(inner->db->p_types.table, [&](hashtab_ptr_t node) {
         auto type = static_cast<type_datum_t *>(node->datum);
         if (!type || type->flavor != TYPE_TYPE) return;
 
-        auto name = this->type_name(type->s.value);
+        auto name = inner->type_name(type->s.value);
         if (!name) return;
 
-        ebitmap_t *bitmap = &db->type_attr_map[type->s.value - 1];
+        ebitmap_t *bitmap = &inner->db->type_attr_map[type->s.value - 1];
 
         bool first = true;
         std::ostringstream stream;
@@ -103,10 +102,10 @@ rust::Vec<rust::String> SePolicyImpl::types() const {
         ebitmap_for_each_positive_bit(bitmap, n, bit) {
             uint32_t type_val = bit + 1;
 
-            auto attr_type = this->type_datum(type_val);
+            auto attr_type = inner->type_datum(type_val);
             if (!attr_type || attr_type->flavor != TYPE_ATTRIB) continue;
 
-            if (auto attr = type_name(type_val)) {
+            if (auto attr = inner->type_name(type_val)) {
                 if (first) {
                     stream << "type " << name.value() << " {";
                     first = false;
@@ -121,7 +120,7 @@ rust::Vec<rust::String> SePolicyImpl::types() const {
         }
 
         // permissive
-        if (ebitmap_get_bit(&db->permissive_map, type->s.value)) {
+        if (ebitmap_get_bit(&inner->db->permissive_map, type->s.value)) {
             out.push_back(rust::String(std::string("permissive ") + name.value()));
         }
     });
@@ -138,7 +137,7 @@ static size_t class_perm_vec_size(const class_datum_t *clz) {
 
 
 void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
-                                rust::Vec<rust::String> &out) const {
+                                rust::Vec<rust::String> &out) const  {
     auto source = this->type_name(node->key.source_type);
     auto target = this->type_name(node->key.target_type);
     auto class_ = this->type_name(node->key.target_class);
@@ -269,39 +268,39 @@ void SePolicyImpl::emit_xperm_rule(const avtab_ptr_t node,
     out.push_back(rust::String(ss.str()));
 }
 
-rust::Vec<rust::String> SePolicyImpl::avtabs() const {
+rust::Vec<rust::String> SePolicy::avtabs() const noexcept {
     rust::Vec<rust::String> out;
 
-    for_each_avtab(&db->te_avtab, [&](avtab_ptr_t node) {
+    for_each_avtab(&inner->db->te_avtab, [&](avtab_ptr_t node) {
         if (node->key.specified & AVTAB_AV) {
-            this->emit_av_rule(node, out);
+            inner->emit_av_rule(node, out);
         } else if (node->key.specified & AVTAB_TYPE) {
-            this->emit_type_rule(node, out);
+            inner->emit_type_rule(node, out);
         } else if (node->key.specified & AVTAB_XPERMS) {
-            this->emit_xperm_rule(node, out);
+            inner->emit_xperm_rule(node, out);
         }
     });
 
     return out;
 }
 
-rust::Vec<rust::String> SePolicyImpl::type_transitions() const {
+rust::Vec<rust::String> SePolicy::transitions() const noexcept {
     rust::Vec<rust::String> out;
 
-    for_each_hashtab(db->filename_trans, [&](hashtab_ptr_t node) {
+    for_each_hashtab(inner->db->filename_trans, [&](hashtab_ptr_t node) {
         auto key = reinterpret_cast<filename_trans_key_t *>(node->key);
         auto trans = static_cast<filename_trans_datum *>(node->datum);
 
-        auto target = this->type_name(key->ttype);
-        auto class_ = this->class_name(key->tclass);
-        auto def = this->type_name(trans->otype);
+        auto target = inner->type_name(key->ttype);
+        auto class_ = inner->class_name(key->tclass);
+        auto def = inner->type_name(trans->otype);
         if (!target || !class_ || !def || key->name == nullptr) return;
 
         ebitmap_node_t *n; uint32_t bit;
         ebitmap_for_each_positive_bit(&trans->stypes, n, bit) {
             uint32_t src_val = bit + 1;
 
-            if (auto src = this->type_name(src_val)) {
+            if (auto src = inner->type_name(src_val)) {
                 std::ostringstream stream;
                 stream << "type_transition " << src.value() << " " << target.value() << " " << class_.value() << " " << def.value() << " " << key->name;
                 out.push_back(rust::String(stream.str()));
@@ -312,14 +311,14 @@ rust::Vec<rust::String> SePolicyImpl::type_transitions() const {
     return out;
 }
 
-rust::Vec<rust::String> SePolicyImpl::genfs_ctx() const {
+rust::Vec<rust::String> SePolicy::genfs_contexts() const noexcept{
     rust::Vec<rust::String> out;
 
-    for_each_list(db->genfs, [&](genfs_t *genfs) {
+    for_each_list(inner->db->genfs, [&](genfs_t *genfs) {
         for_each_list(genfs->head, [&](ocontext *context) {
             char *raw_ptr = nullptr;
             size_t len = 0;
-            if (context_to_string(nullptr, db, &context->context[0], &raw_ptr, &len) == 0) {
+            if (context_to_string(nullptr, inner->db, &context->context[0], &raw_ptr, &len) == 0) {
                 std::unique_ptr<char, decltype(&free)> ctx(raw_ptr, &free);
                 std::ostringstream stream;
                 stream << "genfscon " << genfs->fstype << " " << context->u.name << " " << ctx.get();
@@ -329,24 +328,4 @@ rust::Vec<rust::String> SePolicyImpl::genfs_ctx() const {
     });
 
     return out;
-}
-
-rust::Vec<rust::String> attributes_impl(const SePolicyImpl &impl) noexcept {
-    return impl.attributes();
-}
-
-rust::Vec<rust::String> types_impl(const SePolicyImpl &impl) noexcept {
-    return impl.types();
-}
-
-rust::Vec<rust::String> avtabs_impl(const SePolicyImpl &impl) noexcept {
-    return impl.avtabs();
-}
-
-rust::Vec<rust::String> type_transitions_impl(const SePolicyImpl &impl) noexcept {
-    return impl.type_transitions();
-}
-
-rust::Vec<rust::String> genfs_ctx_impl(const SePolicyImpl &impl) noexcept {
-    return impl.genfs_ctx();
 }
