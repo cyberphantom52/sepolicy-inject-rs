@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <unistd.h>
 #include "file.hpp"
 #include "sepolicy.hpp"
 #include <sepol/policydb/policydb.h>
