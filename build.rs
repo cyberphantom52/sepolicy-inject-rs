@@ -15,7 +15,7 @@ fn main() {
     build_libsepol();
 
     // Build the FFI Bridge
-    cxx_build::bridge("src/ffi/mod.rs")
+    cxx_build::bridge("src/lib.rs")
         .std("c++20")
         .include(&libsepol_dir.join("include"))
         .include(&libsepol_dir.join("cil").join("include"))
