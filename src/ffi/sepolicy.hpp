@@ -10,102 +10,113 @@
 
 // libsepol internal APIs
 __BEGIN_DECLS
-int context_from_string(
-        sepol_handle_t * handle,
-        const policydb_t * policydb,
-        context_struct_t ** cptr,
-        const char *con_str, size_t con_str_len);
-int context_to_string(
-        sepol_handle_t * handle,
-        const policydb_t * policydb,
-        const context_struct_t * context,
-        char **result, size_t * result_len);
+int context_from_string(sepol_handle_t *handle, const policydb_t *policydb,
+                        context_struct_t **cptr, const char *con_str,
+                        size_t con_str_len);
+int context_to_string(sepol_handle_t *handle, const policydb_t *policydb,
+                      const context_struct_t *context, char **result,
+                      size_t *result_len);
 __END_DECLS
 
 // sepolicy paths
-#define PLAT_POLICY_DIR     "/system/etc/selinux/"
-#define VEND_POLICY_DIR     "/vendor/etc/selinux/"
-#define PROD_POLICY_DIR     "/product/etc/selinux/"
-#define ODM_POLICY_DIR      "/odm/etc/selinux/"
-#define SYSEXT_POLICY_DIR   "/system_ext/etc/selinux/"
-#define SPLIT_PLAT_CIL      PLAT_POLICY_DIR "plat_sepolicy.cil"
+#define PLAT_POLICY_DIR "/system/etc/selinux/"
+#define VEND_POLICY_DIR "/vendor/etc/selinux/"
+#define PROD_POLICY_DIR "/product/etc/selinux/"
+#define ODM_POLICY_DIR "/odm/etc/selinux/"
+#define SYSEXT_POLICY_DIR "/system_ext/etc/selinux/"
+#define SPLIT_PLAT_CIL PLAT_POLICY_DIR "plat_sepolicy.cil"
 
 // selinuxfs paths
-#define SELINUX_MNT         "/sys/fs/selinux"
-#define SELINUX_VERSION     SELINUX_MNT "/policyvers"
+#define SELINUX_MNT "/sys/fs/selinux"
+#define SELINUX_VERSION SELINUX_MNT "/policyvers"
 
 class SePolicyImpl {
-    policydb *db;
-    mutable std::unordered_map<uint32_t, std::vector<const char *>> class_perm_cache;
-    friend struct SePolicy;
+  policydb *db;
+  mutable std::unordered_map<uint32_t, std::vector<const char *>>
+      class_perm_cache;
+  friend struct SePolicy;
 
-    std::optional<std::string> type_name(uint32_t v) const;
-    std::optional<std::string> class_name(uint32_t v) const;
-    type_datum_t * type_datum(uint32_t v) const;
-    class_datum_t * class_datum(uint32_t v) const;
+  std::optional<std::string> type_name(uint32_t v) const;
+  std::optional<std::string> class_name(uint32_t v) const;
+  type_datum_t *type_datum(uint32_t v) const;
+  class_datum_t *class_datum(uint32_t v) const;
 
-    void emit_av_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
-    void emit_type_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
-    void emit_xperm_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
+  void emit_av_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
+  void emit_type_rule(const avtab_ptr_t node,
+                      rust::Vec<rust::String> &out) const;
+  void emit_xperm_rule(const avtab_ptr_t node,
+                       rust::Vec<rust::String> &out) const;
 
 public:
-    explicit SePolicyImpl(policydb *db) : db(db) {}
-    ~SePolicyImpl();
+  explicit SePolicyImpl(policydb *db) : db(db) {}
+  ~SePolicyImpl();
 };
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;
 std::unique_ptr<SePolicyImpl> from_split_impl() noexcept;
 std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept;
-std::unique_ptr<SePolicyImpl> from_data_impl(rust::Slice<const uint8_t> data) noexcept;
+std::unique_ptr<SePolicyImpl>
+from_data_impl(rust::Slice<const uint8_t> data) noexcept;
 
-static auto specified_to_name = [](uint32_t spec) -> std::optional<std::string> {
-    switch (spec) {
-        case AVTAB_ALLOWED:              return "allow";
-        case AVTAB_AUDITALLOW:           return "auditallow";
-        case AVTAB_AUDITDENY:            return "dontaudit";
-        case AVTAB_TRANSITION:           return "type_transition";
-        case AVTAB_MEMBER:               return "type_member";
-        case AVTAB_CHANGE:               return "type_change";
-        case AVTAB_XPERMS_ALLOWED:       return "allowxperm";
-        case AVTAB_XPERMS_AUDITALLOW:    return "auditallowxperm";
-        case AVTAB_XPERMS_DONTAUDIT:     return "dontauditxperm";
-        default:                         return std::nullopt;
-    }
+static auto specified_to_name =
+    [](uint32_t spec) -> std::optional<std::string> {
+  switch (spec) {
+  case AVTAB_ALLOWED:
+    return "allow";
+  case AVTAB_AUDITALLOW:
+    return "auditallow";
+  case AVTAB_AUDITDENY:
+    return "dontaudit";
+  case AVTAB_TRANSITION:
+    return "type_transition";
+  case AVTAB_MEMBER:
+    return "type_member";
+  case AVTAB_CHANGE:
+    return "type_change";
+  case AVTAB_XPERMS_ALLOWED:
+    return "allowxperm";
+  case AVTAB_XPERMS_AUDITALLOW:
+    return "auditallowxperm";
+  case AVTAB_XPERMS_DONTAUDIT:
+    return "dontauditxperm";
+  default:
+    return std::nullopt;
+  }
 };
 
 // Helper templates to iterate over lists and hashtables
 template <typename Node, typename F>
 static void for_each_list(Node *node_ptr, const F &fn) {
-    for (; node_ptr; node_ptr = node_ptr->next) {
-        fn(node_ptr);
-    }
+  for (; node_ptr; node_ptr = node_ptr->next) {
+    fn(node_ptr);
+  }
 }
 
 template <typename Node, typename F>
 static void for_each_hash(Node **node_ptr, int n_slot, const F &fn) {
-    for (int i = 0; i < n_slot; ++i) {
-        for_each_list(node_ptr[i], fn);
-    }
+  for (int i = 0; i < n_slot; ++i) {
+    for_each_list(node_ptr[i], fn);
+  }
 }
 
 template <typename F>
 static void for_each_hashtab(hashtab_t htab, const F &fn) {
-    for_each_hash(htab->htable, htab->size, fn);
+  for_each_hash(htab->htable, htab->size, fn);
 }
 
-template <typename F>
-static void for_each_avtab(avtab_t *avtab, const F &fn) {
-    for_each_hash(avtab->htable, avtab->nslot, fn);
+template <typename F> static void for_each_avtab(avtab_t *avtab, const F &fn) {
+  for_each_hash(avtab->htable, avtab->nslot, fn);
 }
 
 //
-template <class Func>
-class run_finally {
-    run_finally(const run_finally &) = delete;
-    run_finally &operator=(const run_finally &) = delete;
+template <class Func> class run_finally {
+  run_finally(const run_finally &) = delete;
+  run_finally &operator=(const run_finally &) = delete;
+
 public:
-    explicit run_finally(Func &&fn) : fn(std::move(fn)) {}
-    ~run_finally() { fn(); }
+  explicit run_finally(Func &&fn) : fn(std::move(fn)) {}
+  ~run_finally() { fn(); }
+
 private:
-    Func fn;
+  Func fn;
 };
