@@ -7,19 +7,25 @@ use std::process::ExitCode;
 #[derive(Parser)]
 #[command(name = "sepolicy-inject-rs")]
 #[command(author, version, about, long_about = None)]
-#[command(
-    after_help = "If neither --load, --load-split, nor --compile-split is specified, it will load from current live policies (/sys/fs/selinux/policy)"
+#[cfg_attr(
+    target_os = "android",
+    command(
+        after_help = "If neither --load, --load-split, nor --compile-split is specified, it will load from current live policies (/sys/fs/selinux/policy)"
+    )
 )]
 struct Cli {
     /// Load monolithic sepolicy from a file
-    #[arg(long, group = "source", conflicts_with_all = ["load_split", "compile_split"])]
+    #[cfg_attr(target_os = "android", arg(long, group = "source", conflicts_with_all = ["load_split", "compile_split"]))]
+    #[cfg_attr(not(target_os = "android"), arg(long))]
     load: Option<PathBuf>,
 
     /// Load from precompiled sepolicy or compile split cil policies
+    #[cfg(target_os = "android")]
     #[arg(long, group = "source", conflicts_with_all = ["load", "compile_split"])]
     load_split: bool,
 
     /// Compile split cil policies
+    #[cfg(target_os = "android")]
     #[arg(long, group = "source", conflicts_with_all = ["load", "load_split"])]
     compile_split: bool,
 
@@ -59,12 +65,23 @@ fn main() -> ExitCode {
     // Determine the source and load the policy
     let sepolicy = if let Some(ref file) = cli.load {
         SePolicy::from_file(file)
-    } else if cli.load_split {
-        SePolicy::from_split()
-    } else if cli.compile_split {
-        SePolicy::compile_split()
     } else {
-        SePolicy::from_file("/sys/fs/selinux/policy")
+        #[cfg(target_os = "android")]
+        {
+            if cli.load_split {
+                SePolicy::from_split()
+            } else if cli.compile_split {
+                SePolicy::compile_split()
+            } else {
+                SePolicy::from_file("/sys/fs/selinux/policy")
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            eprintln!("Error: --load <file> is required on non-Android platforms");
+            return ExitCode::FAILURE;
+        }
     };
 
     let sepolicy = match sepolicy {
