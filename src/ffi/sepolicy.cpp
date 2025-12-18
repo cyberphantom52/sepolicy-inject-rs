@@ -5,7 +5,7 @@
 #include <sepol/policydb/policydb.h>
 #include <sepol/policydb/ebitmap.h>
 #include <sstream>
-#include "sepolicy-inject-rs/src/ffi/mod.rs.h"
+#include "sepolicy-inject-rs/src/lib.rs.h"
 #include "mmap.hpp"
 
 #include <cil/cil.h>
