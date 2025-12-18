@@ -1,17 +1,10 @@
 #pragma once
 
+#include "utils.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <rust/cxx.h>
-
-#define ALLOW_MOVE_ONLY(clazz)                                                 \
-  clazz(const clazz &) = delete;                                               \
-  clazz(clazz &&o) : clazz() { swap(o); }                                      \
-  clazz &operator=(clazz &&o) {                                                \
-    swap(o);                                                                   \
-    return *this;                                                              \
-  }
 
 using ByteSlice = rust::Slice<const uint8_t>;
 using MutByteSlice = rust::Slice<uint8_t>;
