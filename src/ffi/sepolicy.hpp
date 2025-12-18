@@ -28,6 +28,8 @@ class SePolicyImpl {
 
     std::optional<std::string> type_name(uint32_t v) const;
     std::optional<std::string> class_name(uint32_t v) const;
+    type_datum_t * type_datum(uint32_t v) const;
+    class_datum_t * class_datum(uint32_t v) const;
 
     void emit_av_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
     void emit_type_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;

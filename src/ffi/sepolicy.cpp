@@ -16,15 +16,37 @@ SePolicyImpl::~SePolicyImpl() {
 }
 
 std::optional<std::string> SePolicyImpl::type_name(uint32_t v) const {
-    if (!v) return std::nullopt;
+    // v is a 1-based SELinux type value (0 is invalid).
+    // libsepol stores names in a 0-based array indexed by (v - 1),
+    // and valid values are in the range [1, p_types.nprim].
+    if (v < 1 || v > db->p_types.nprim) return std::nullopt;
     const char *name = db->p_type_val_to_name[v - 1];
     return name ? std::optional(name) : std::nullopt;
 }
 
 std::optional<std::string> SePolicyImpl::class_name(uint32_t v) const {
-    if (!v) return std::nullopt;
+    // v is a 1-based SELinux class value (0 is invalid).
+    // class names are stored in a 0-based array indexed by (v - 1),
+    // with valid values in the range [1, p_classes.nprim].
+    if (v < 1 || v > db->p_classes.nprim) return std::nullopt;
     const char *name = db->p_class_val_to_name[v - 1];
     return name ? std::optional(name) : std::nullopt;
+}
+
+type_datum_t * SePolicyImpl::type_datum(uint32_t v) const {
+    // v is a 1-based SELinux type value.
+    // type_val_to_struct is a 0-based array indexed by (v - 1);
+    // values outside [1, p_types.nprim] would be out-of-bounds.
+    if (v < 1 || v > db->p_types.nprim) return nullptr;
+    return db->type_val_to_struct[v - 1];
+}
+
+class_datum_t * SePolicyImpl::class_datum(uint32_t v) const {
+    // v is a 1-based SELinux class value.
+    // class_val_to_struct is a 0-based array indexed by (v - 1);
+    // values outside [1, p_classes.nprim] would be out-of-bounds.
+    if (v < 1 || v > db->p_classes.nprim) return nullptr;
+    return db->class_val_to_struct[v - 1];
 }
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
@@ -51,7 +73,7 @@ rust::Vec<rust::String> SePolicyImpl::attributes() const {
     rust::Vec<rust::String> out;
 
     for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
-        auto type = static_cast<type_datum *>(node->datum);
+        auto type = static_cast<type_datum_t *>(node->datum);
         if (type->flavor != TYPE_ATTRIB) return;
 
         if (auto name = this->type_name(type->s.value)) {
@@ -66,7 +88,7 @@ rust::Vec<rust::String> SePolicyImpl::types() const {
     rust::Vec<rust::String> out;
 
     for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
-        auto type = static_cast<type_datum *>(node->datum);
+        auto type = static_cast<type_datum_t *>(node->datum);
         if (!type || type->flavor != TYPE_TYPE) return;
 
         auto name = this->type_name(type->s.value);
@@ -81,7 +103,7 @@ rust::Vec<rust::String> SePolicyImpl::types() const {
         ebitmap_for_each_positive_bit(bitmap, n, bit) {
             uint32_t type_val = bit + 1;
 
-            auto *attr_type = db->type_val_to_struct[type_val];
+            auto attr_type = this->type_datum(type_val);
             if (!attr_type || attr_type->flavor != TYPE_ATTRIB) continue;
 
             if (auto attr = type_name(type_val)) {
@@ -107,11 +129,20 @@ rust::Vec<rust::String> SePolicyImpl::types() const {
     return out;
 }
 
+static size_t class_perm_vec_size(const class_datum_t *clz) {
+    size_t n = clz->permissions.nprim;
+    if (clz->comdatum)
+        n = std::max(n, size_t(clz->comdatum->permissions.nprim));
+    return n;
+}
+
+
 void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
                                 rust::Vec<rust::String> &out) const {
     auto source = this->type_name(node->key.source_type);
     auto target = this->type_name(node->key.target_type);
     auto class_ = this->type_name(node->key.target_class);
+    uint16_t class_val = node->key.target_class;
     if (!source || !target || !class_) return;
 
     auto rule = specified_to_name(node->key.specified);
@@ -120,13 +151,14 @@ void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
     uint32_t data = node->key.specified == AVTAB_AUDITDENY ? ~(node->datum.data)
                                                             : node->datum.data;
 
-    class_datum_t *clz = this->db->class_val_to_struct[node->key.target_class - 1];
-    if (!clz) return;
+    auto clz = this->class_datum(class_val);
+    if (clz == nullptr) return;
 
-    auto [it, inserted] = this->class_perm_cache.try_emplace(node->key.target_class - 1);
+    auto [it, inserted] = this->class_perm_cache.try_emplace(class_val);
     if (inserted) {
+        size_t size = class_perm_vec_size(clz);
         auto &vec = it->second;
-        vec.assign(32, nullptr);
+        vec.assign(size, nullptr);
 
         auto collect = [&](hashtab_t tab) {
             for_each_hashtab(tab, [&](hashtab_ptr_t pnode) {
@@ -147,6 +179,8 @@ void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
     while (data) {
         uint32_t bit = __builtin_ctz(data);
         data &= data - 1;
+
+        if (bit >= it->second.size()) continue;
 
         const char *perm = it->second[bit];
         if (!perm) continue;
