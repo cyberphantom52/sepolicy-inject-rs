@@ -16,6 +16,7 @@ clap = { version = "4.5.53", features = ["derive", "string"] }
 cxx = "1.0.192"
 pest = "2.8.4"
 pest_derive = "2.8.4"
+thiserror = "2.0.17"
 
 [build-dependencies]
 cc = "1.2.49"
