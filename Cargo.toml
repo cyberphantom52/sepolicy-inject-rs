@@ -17,6 +17,7 @@ cxx = "1.0.192"
 pest = "2.8.4"
 pest_derive = "2.8.4"
 thiserror = "2.0.17"
+m4rs = { git = "https://github.com/cyberphantom52/m4rs.git", rev = "923d4bbcfb50c23006a8faa4e5234204aa920f09" }
 
 [build-dependencies]
 cc = "1.2.49"

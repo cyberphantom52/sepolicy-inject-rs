@@ -310,6 +310,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "m4rs"
+version = "0.1.0"
+source = "git+https://github.com/cyberphantom52/m4rs.git?rev=923d4bbcfb50c23006a8faa4e5234204aa920f09#923d4bbcfb50c23006a8faa4e5234204aa920f09"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "thiserror",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -397,6 +407,7 @@ dependencies = [
  "cxx",
  "cxx-build",
  "cxx-gen",
+ "m4rs",
  "pest",
  "pest_derive",
  "thiserror",
