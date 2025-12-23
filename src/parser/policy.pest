@@ -1,0 +1,216 @@
+// SELinux Type Enforcement (.te) Grammar
+// Parses standard SELinux policy statements
+
+// =============================================================================
+// Whitespace and Comments (implicit)
+// =============================================================================
+
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT    = _{ "#" ~ (!NEWLINE ~ ANY)* }
+
+// =============================================================================
+// Entry Point
+// =============================================================================
+
+policy_file = { SOI ~ statements ~ EOI }
+
+statements = { statement* }
+
+statement = {
+    conditional
+  | avrule_def
+  | avxrule_def
+  | typerule_def
+  | type_def
+  | typealias_def
+  | attribute_def
+  | attribute_role_def
+  | typeattribute_def
+  | roleattribute_def
+  | typebound_def
+  | role_def
+  | role_allow
+  | bool_def
+  | permissive
+  | range_transition_def
+  | role_transition_def
+  | initial_sid
+  | genfscon
+  | fs_use
+  | portcon
+  | nodecon
+  | netifcon
+  | pirqcon
+  | iomemcon
+  | ioportcon
+  | pcidevicecon
+  | devicetreecon
+  | module_stmt
+}
+
+// =============================================================================
+// Terminals / Tokens
+// =============================================================================
+
+MINUS = { "-" }
+TILDE = { "~" }
+EXPL  = { "!" }
+
+// Number: digits with optional dots
+NUMBER = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)* }
+
+// Hex number for xperm ioctl codes
+HEX_NUMBER = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+
+// Path: starts with / followed by path characters
+PATH = @{ "/" ~ (ASCII_ALPHANUMERIC | ")" | "_" | "." | "*" | "/" | "$")* }
+
+// IPv6 address
+IPV6_ADDR = @{
+    ASCII_HEX_DIGIT{0, 4} ~ ":" ~ ASCII_HEX_DIGIT{0, 4} ~ ":" ~ (ASCII_HEX_DIGIT | ":")*
+}
+
+// Filename: quoted string
+FILENAME = @{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+
+// Identifier
+IDENTIFIER = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_" | "-" | ".")* }
+
+// =============================================================================
+// Module Declaration
+// =============================================================================
+
+module_stmt = { ^"module" ~ IDENTIFIER ~ NUMBER ~ ";"+ }
+
+// =============================================================================
+// Conditionals (if/else)
+// =============================================================================
+
+AND = { "&&" }
+OR  = { "||" }
+EQ  = { "==" }
+NEQ = { "!=" }
+
+conditional = { ^"if" ~ "(" ~ cond_expr ~ ")" ~ "{" ~ statements ~ "}" ~ (^"else" ~ "{" ~ statements ~ "}")? }
+
+cond_expr = { cond_term ~ ((AND | OR | EQ | NEQ) ~ cond_term)* }
+
+cond_term = { EXPL? ~ (IDENTIFIER | "(" ~ cond_expr ~ ")") }
+
+// =============================================================================
+// Type and Attribute Definitions
+// =============================================================================
+
+type_def = { ^"type" ~ IDENTIFIER ~ ((^"alias" ~ names ~ ("," ~ comma_list)?) | ("," ~ comma_list)?) ~ ";"+ }
+
+attribute_def = { ^"attribute" ~ IDENTIFIER ~ ";"+ }
+
+attribute_role_def = { ^"attribute_role" ~ IDENTIFIER ~ ";"+ }
+
+typealias_def = { ^"typealias" ~ IDENTIFIER ~ ^"alias" ~ names ~ ";"+ }
+
+typeattribute_def = { ^"typeattribute" ~ IDENTIFIER ~ comma_list ~ ";"+ }
+
+roleattribute_def = { ^"roleattribute" ~ IDENTIFIER ~ comma_list ~ ";"+ }
+
+typebound_def = { ^"typebounds" ~ IDENTIFIER ~ comma_list ~ ";"+ }
+
+// =============================================================================
+// Role Definitions
+// =============================================================================
+
+role_def = { ^"role" ~ IDENTIFIER ~ (^"types" ~ comma_list)? ~ ";"+ }
+
+role_allow = { ^"allow" ~ names ~ names ~ ";"+ }
+
+// =============================================================================
+// AV Rules (allow, dontaudit, auditallow, neverallow)
+// =============================================================================
+
+avrule_def = { (^"allow" | ^"dontaudit" | ^"auditallow" | ^"neverallow") ~ names ~ names ~ ":" ~ names ~ names ~ ";"+ }
+
+avxrule_def = { (^"allowxperm" | ^"dontauditxperm" | ^"auditallowxperm" | ^"neverallowxperm") ~ names ~ names ~ ":" ~ names ~ IDENTIFIER ~ names ~ ";"+ }
+
+// =============================================================================
+// Type Rules (type_transition, type_change, type_member)
+// =============================================================================
+
+typerule_def = { (^"type_transition" | ^"type_change" | ^"type_member") ~ names ~ names ~ ":" ~ names ~ IDENTIFIER ~ (FILENAME | IDENTIFIER)? ~ ";"+ }
+
+// =============================================================================
+// Other Definitions
+// =============================================================================
+
+permissive = { ^"permissive" ~ IDENTIFIER ~ ";"+ }
+
+bool_def = { ^"bool" ~ IDENTIFIER ~ bool_value ~ ";"+ }
+
+bool_value = @{ ^"true" | ^"false" }
+
+range_transition_def = { ^"range_transition" ~ names ~ names ~ ((":" ~ names ~ mls_range_def) | names) ~ ";"+ }
+
+role_transition_def = { ^"role_transition" ~ names ~ names ~ names ~ ";"+ }
+
+// =============================================================================
+// Security Contexts
+// =============================================================================
+
+security_context = { IDENTIFIER ~ ":" ~ IDENTIFIER ~ ":" ~ IDENTIFIER ~ (":" ~ mls_range_def)? }
+
+mls_range_def = { mls_level_def ~ (MINUS ~ mls_level_def)? }
+
+mls_level_def = { IDENTIFIER ~ (":" ~ comma_list)? }
+
+initial_sid = {
+    ^"sid" ~ IDENTIFIER ~ security_context
+}
+
+genfscon = {
+    ^"genfscon" ~ IDENTIFIER ~ PATH ~ (MINUS ~ (IDENTIFIER | MINUS))? ~ security_context
+}
+
+fs_use = { (^"fs_use_xattr" | ^"fs_use_task" | ^"fs_use_trans") ~ IDENTIFIER ~ security_context ~ ";"+ }
+
+portcon = { ^"portcon" ~ IDENTIFIER ~ NUMBER ~ (MINUS ~ NUMBER)? ~ security_context }
+
+nodecon = { ^"nodecon" ~ (NUMBER | IPV6_ADDR) ~ (NUMBER | IPV6_ADDR) ~ security_context }
+
+netifcon = { ^"netifcon" ~ IDENTIFIER ~ security_context ~ security_context }
+
+pirqcon = { ^"pirqcon" ~ NUMBER ~ security_context }
+
+iomemcon = { ^"iomemcon" ~ NUMBER ~ (MINUS ~ NUMBER)? ~ security_context }
+
+ioportcon = { ^"ioportcon" ~ NUMBER ~ (MINUS ~ NUMBER)? ~ security_context }
+
+pcidevicecon = { ^"pcidevicecon" ~ NUMBER ~ security_context }
+
+devicetreecon = { ^"devicetreecon" ~ NUMBER ~ security_context }
+
+// =============================================================================
+// Names and Identifiers (sets, lists)
+// =============================================================================
+
+names = {
+    (TILDE ~ (identifier | nested_id_set))
+  | (IDENTIFIER ~ MINUS ~ IDENTIFIER)
+  | identifier
+  | nested_id_set
+  | asterisk
+}
+
+identifier = { IDENTIFIER }
+asterisk   = { "*" }
+
+nested_id_set = { "{" ~ nested_id_list ~ "}" }
+
+nested_id_list = { nested_id_element+ }
+
+nested_id_element = {
+    (MINUS ~ (IDENTIFIER | HEX_NUMBER))
+  | HEX_NUMBER
+  | identifier
+  | nested_id_set
+}
+
+comma_list = { nested_id_list ~ ("," ~ nested_id_list)* }
