@@ -6,6 +6,12 @@ pub use crate::ffi::SePolicy;
 
 #[cxx::bridge]
 mod ffi {
+    struct XPerm {
+        low: u16,
+        high: u16,
+        reset: bool,
+    }
+
     struct SePolicy {
         inner: UniquePtr<SePolicyImpl>,
     }
@@ -14,6 +20,54 @@ mod ffi {
         include!("sepolicy-inject-rs/src/ffi/sepolicy.hpp");
 
         type SePolicyImpl;
+
+        // AVRules
+        fn allow(self: &mut SePolicy, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]);
+        fn deny(self: &mut SePolicy, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]);
+        fn auditallow(self: &mut SePolicy, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]);
+        fn dontaudit(self: &mut SePolicy, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]);
+
+        // AVXRules
+        fn allowxperm(
+            self: &mut SePolicy,
+            src: &[&str],
+            tgt: &[&str],
+            cls: &[&str],
+            x_perm: &[XPerm],
+        );
+        fn auditallowxperm(
+            self: &mut SePolicy,
+            src: &[&str],
+            tgt: &[&str],
+            cls: &[&str],
+            x_perm: &[XPerm],
+        );
+        fn dontauditxperm(
+            self: &mut SePolicy,
+            src: &[&str],
+            tgt: &[&str],
+            cls: &[&str],
+            x_perm: &[XPerm],
+        );
+
+        fn permissive(self: &mut SePolicy, types: &[&str]);
+        fn enforce(self: &mut SePolicy, types: &[&str]);
+        fn typeattribute(self: &mut SePolicy, ty: &[&str], attrs: &[&str]);
+        #[cxx_name = "type"]
+        fn type_(self: &mut SePolicy, ty: &str, attrs: &[&str]);
+        fn attribute(self: &mut SePolicy, name: &str);
+
+        fn type_transition(
+            self: &mut SePolicy,
+            src: &str,
+            tgt: &str,
+            cls: &str,
+            dest: &str,
+            obj: &str,
+        );
+        fn type_change(self: &mut SePolicy, src: &str, tgt: &str, cls: &str, dest: &str);
+        fn type_member(self: &mut SePolicy, src: &str, tgt: &str, cls: &str, dest: &str);
+        fn genfscon(self: &mut SePolicy, fs: &str, path: &str, context: &str);
 
         fn attributes(self: &SePolicy) -> Vec<String>;
         fn types(self: &SePolicy) -> Vec<String>;
