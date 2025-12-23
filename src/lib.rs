@@ -1,5 +1,7 @@
 use std::path::Path;
 
+pub mod parser;
+
 pub use crate::ffi::SePolicy;
 
 #[cxx::bridge]
