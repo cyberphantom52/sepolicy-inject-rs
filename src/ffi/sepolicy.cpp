@@ -2,11 +2,9 @@
 #include "utils.hpp"
 #include "mmap.hpp"
 #include "sepolicy-inject-rs/src/lib.rs.h"
-#include <fcntl.h>
 #include <sepol/policydb/ebitmap.h>
 #include <sepol/policydb/policydb.h>
 #include <sstream>
-#include <unistd.h>
 
 #include <cil/cil.h>
 
@@ -93,81 +91,6 @@ from_data_impl(rust::Slice<const uint8_t> data) noexcept {
   }
 
   return std::make_unique<SePolicyImpl>(db);
-}
-
-#define SHALEN 64
-static bool read_exact(const char *path, char *buf, size_t len) {
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0)
-    return false;
-
-  ssize_t total = 0;
-  while (total < (ssize_t)len) {
-    ssize_t r = read(fd, buf + total, len - total);
-    if (r <= 0) {
-      close(fd);
-      return false;
-    }
-    total += r;
-  }
-
-  close(fd);
-  return true;
-}
-
-static bool cmp_sha256(const char *a, const char *b) {
-  char id_a[SHALEN] = {0};
-  char id_b[SHALEN] = {0};
-
-  if (!read_exact(a, id_a, SHALEN))
-    return false;
-
-  if (!read_exact(b, id_b, SHALEN))
-    return false;
-
-  return memcmp(id_a, id_b, SHALEN) == 0;
-}
-
-static bool check_precompiled(const char *precompiled) {
-  bool ok = false;
-  const char *actual_sha;
-  char compiled_sha[128];
-
-  actual_sha = PLAT_POLICY_DIR "plat_and_mapping_sepolicy.cil.sha256";
-  if (access(actual_sha, R_OK) == 0) {
-    ok = true;
-    sprintf(compiled_sha, "%s.plat_and_mapping.sha256", precompiled);
-    if (!cmp_sha256(actual_sha, compiled_sha))
-      return false;
-  }
-
-  actual_sha = PLAT_POLICY_DIR "plat_sepolicy_and_mapping.sha256";
-  if (access(actual_sha, R_OK) == 0) {
-    ok = true;
-    sprintf(compiled_sha, "%s.plat_sepolicy_and_mapping.sha256", precompiled);
-    if (!cmp_sha256(actual_sha, compiled_sha))
-      return false;
-  }
-
-  actual_sha = PROD_POLICY_DIR "product_sepolicy_and_mapping.sha256";
-  if (access(actual_sha, R_OK) == 0) {
-    ok = true;
-    sprintf(compiled_sha, "%s.product_sepolicy_and_mapping.sha256",
-            precompiled);
-    if (!cmp_sha256(actual_sha, compiled_sha))
-      return false;
-  }
-
-  actual_sha = SYSEXT_POLICY_DIR "system_ext_sepolicy_and_mapping.sha256";
-  if (access(actual_sha, R_OK) == 0) {
-    ok = true;
-    sprintf(compiled_sha, "%s.system_ext_sepolicy_and_mapping.sha256",
-            precompiled);
-    if (!cmp_sha256(actual_sha, compiled_sha))
-      return false;
-  }
-
-  return ok;
 }
 
 std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
