@@ -1,0 +1,41 @@
+# Example SELinux type enforcement file
+
+# Type definitions
+type my_domain_t;
+type my_file_t, file_type;
+type my_exec_t, exec_type, file_type;
+
+# Attribute
+attribute my_attr;
+
+# Bool
+bool my_bool true;
+
+# Basic allow rules
+allow my_domain_t self:process { fork sigchld };
+allow my_domain_t my_file_t:file { read write open getattr };
+allow my_domain_t my_exec_t:file { execute execute_no_trans };
+
+# Allow with sets
+allow { my_domain_t kernel_t } { my_file_t my_exec_t }:{ file dir } { read getattr };
+
+# Type transition
+type_transition my_domain_t my_exec_t:process my_domain_t;
+type_transition my_domain_t my_file_t:file my_file_t "myfile.txt";
+
+# Typeattribute
+typeattribute my_domain_t my_attr;
+
+# Conditional
+if (my_bool) {
+    allow my_domain_t my_file_t:file write;
+}
+
+if (my_bool) {
+    allow my_domain_t my_file_t:file execute;
+} else {
+    dontaudit my_domain_t my_file_t:file execute;
+}
+
+# Permissive
+permissive my_domain_t;
