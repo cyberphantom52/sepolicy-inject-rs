@@ -115,23 +115,41 @@ template <typename F> static void for_each_avtab(avtab_t *avtab, const F &fn) {
 
 template <typename T>
 static T *hashtab_find(hashtab_t h, rust::Str key) {
-  char buf[256];
-  size_t len = std::min(size_t(255), key.size());
-  memcpy(buf, key.data(), len);
-  buf[len] = '\0';
-  return static_cast<T *>(hashtab_search(h, buf));
+  std::string s(key.data(), key.size());
+  return static_cast<T *>(hashtab_search(h, s.c_str()));
 }
 
-template <typename F>
+inline char *dup_str(rust::Str src) {
+  size_t len = src.size();
+  char *s = static_cast<char *>(malloc(len + 1));
+  memcpy(s, src.data(), len);
+  s[len] = '\0';
+  return s;
+}
+
+inline bool str_eq(std::string_view a, rust::Str b) {
+  return a.size() == b.size() && memcmp(a.data(), b.data(), a.size()) == 0;
+}
+
+template <class Node, class Func>
+static Node *list_find(Node *node_ptr, const Func &fn) {
+  for (auto cur = node_ptr; cur; cur = cur->next) {
+    if (fn(cur))
+      return cur;
+  }
+  return nullptr;
+}
+
+template <typename T, typename F>
 static void for_each_rule(rust::Slice<rust::Str const> src,
                           rust::Slice<rust::Str const> tgt,
                           rust::Slice<rust::Str const> cls,
-                          rust::Slice<rust::Str const> perm, const F &fn) {
+                          rust::Slice<T const> last, const F &fn) {
   for (auto s : src)
     for (auto t : tgt)
       for (auto c : cls)
-        for (auto p : perm)
-          fn(s, t, c, p);
+        for (auto &x : last)
+          fn(s, t, c, x);
 }
 
 
