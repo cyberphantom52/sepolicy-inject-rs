@@ -39,7 +39,6 @@ fn main() {
 }
 
 fn build_libsepol() {
-    let target = std::env::var("TARGET").unwrap();
     let mut libsepol_build = cc::Build::new();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let libsepol_dir = manifest_dir.join("selinux").join("libsepol");
@@ -52,7 +51,15 @@ fn build_libsepol() {
         .include(&libsepol_dir.join("cil").join("src"))
         .flag("-Wno-unused-but-set-variable");
 
-    if !target.contains("android") {
+    // Determine if we should define HAVE_REALLOCARRAY
+    // - Non-Android: glibc/musl typically have it
+    // - Android API 29+: Bionic provides reallocarray
+    // - Android API < 29: Bionic does NOT have reallocarray, use libsepol's fallback
+    let android_api = std::env::var("ANDROID_PLATFORM")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok());
+
+    if android_api.is_none() || android_api.unwrap() >= 29 {
         libsepol_build.define("HAVE_REALLOCARRAY", None);
     }
 
