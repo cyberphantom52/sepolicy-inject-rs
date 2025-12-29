@@ -113,6 +113,28 @@ template <typename F> static void for_each_avtab(avtab_t *avtab, const F &fn) {
   for_each_hash(avtab->htable, avtab->nslot, fn);
 }
 
+template <typename T>
+static T *hashtab_find(hashtab_t h, rust::Str key) {
+  char buf[256];
+  size_t len = std::min(size_t(255), key.size());
+  memcpy(buf, key.data(), len);
+  buf[len] = '\0';
+  return static_cast<T *>(hashtab_search(h, buf));
+}
+
+template <typename F>
+static void for_each_rule(rust::Slice<rust::Str const> src,
+                          rust::Slice<rust::Str const> tgt,
+                          rust::Slice<rust::Str const> cls,
+                          rust::Slice<rust::Str const> perm, const F &fn) {
+  for (auto s : src)
+    for (auto t : tgt)
+      for (auto c : cls)
+        for (auto p : perm)
+          fn(s, t, c, p);
+}
+
+
 //
 template <class Func> class run_finally {
   run_finally(const run_finally &) = delete;
