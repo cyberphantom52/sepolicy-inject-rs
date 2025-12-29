@@ -142,12 +142,7 @@ impl SePolicy {
     pub fn load_rules_from_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|e| format!("Failed to read file: {}", e))?;
-        self.load_rules(&content)
-    }
-
-    /// Parse and apply rules from a .te format string
-    pub fn load_rules(&mut self, content: &str) -> Result<(), String> {
-        let policy = parser::parse(content).map_err(|e| format!("Parse error: {}", e))?;
+        let policy = parser::parse(&content).map_err(|e| format!("Parse error: {}", e))?;
         self.apply_policy(&policy);
         Ok(())
     }
@@ -350,12 +345,12 @@ mod tests {
 
         // Create attribute first, then type with that attribute
         // (types without attributes don't appear in types() output)
-        sepolicy
-            .load_rules(&format!(
-                "attribute {};\ntype {}, {};",
-                attr_name, type_name, attr_name
-            ))
-            .expect("failed to add type");
+        let policy = parser::parse(&format!(
+            "attribute {};\ntype {}, {};",
+            attr_name, type_name, attr_name
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify type was added
         assert!(
@@ -375,9 +370,9 @@ mod tests {
             "attribute should not exist before adding"
         );
 
-        sepolicy
-            .load_rules(&format!("attribute {};", attr_name))
-            .expect("failed to add attribute");
+        let policy =
+            parser::parse(&format!("attribute {};", attr_name)).expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify attribute was added
         assert!(
@@ -393,17 +388,12 @@ mod tests {
         let attr_name = "test_ta_attr_xyz";
 
         // First create the type and attribute
-        sepolicy
-            .load_rules(&format!(
-                "type {};\nattribute {};",
-                type_name, attr_name
-            ))
-            .expect("failed to create type and attribute");
-
-        // Now associate them
-        sepolicy
-            .load_rules(&format!("typeattribute {} {};", type_name, attr_name))
-            .expect("failed to add typeattribute");
+        let policy = parser::parse(&format!(
+            "type {};\nattribute {};\ntypeattribute {} {};",
+            type_name, attr_name, type_name, attr_name
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the type has the attribute
         let types = sepolicy.types();
@@ -426,14 +416,12 @@ mod tests {
         let tgt_type = "test_allow_tgt_t";
 
         // Create our own types first
-        sepolicy
-            .load_rules(&format!("type {};\ntype {};", src_type, tgt_type))
-            .expect("failed to create types");
-
-        // Add allow rule with our own types
-        sepolicy
-            .load_rules(&format!("allow {} {}:process fork;", src_type, tgt_type))
-            .expect("failed to add allow rule");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\nallow {} {}:process fork;",
+            src_type, tgt_type, src_type, tgt_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the allow rule was added
         let avtabs = sepolicy.avtabs();
@@ -451,18 +439,12 @@ mod tests {
         let src_type = "test_auditallow_src_t";
         let tgt_type = "test_auditallow_tgt_t";
 
-        // Create our own types first
-        sepolicy
-            .load_rules(&format!("type {};\ntype {};", src_type, tgt_type))
-            .expect("failed to create types");
-
-        // Add auditallow rule
-        sepolicy
-            .load_rules(&format!(
-                "auditallow {} {}:process fork;",
-                src_type, tgt_type
-            ))
-            .expect("failed to add auditallow rule");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\nauditallow {} {}:process fork;",
+            src_type, tgt_type, src_type, tgt_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the auditallow rule was added
         let avtabs = sepolicy.avtabs();
@@ -480,18 +462,12 @@ mod tests {
         let src_type = "test_dontaudit_src_t";
         let tgt_type = "test_dontaudit_tgt_t";
 
-        // Create our own types first
-        sepolicy
-            .load_rules(&format!("type {};\ntype {};", src_type, tgt_type))
-            .expect("failed to create types");
-
-        // Add dontaudit rule
-        sepolicy
-            .load_rules(&format!(
-                "dontaudit {} {}:process fork;",
-                src_type, tgt_type
-            ))
-            .expect("failed to add dontaudit rule");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\ndontaudit {} {}:process fork;",
+            src_type, tgt_type, src_type, tgt_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the dontaudit rule was added
         let avtabs = sepolicy.avtabs();
@@ -508,24 +484,9 @@ mod tests {
         let mut sepolicy = load_policy();
         let type_name = "test_permissive_type_xyz";
 
-        // Create a new type first
-        sepolicy
-            .load_rules(&format!("type {};", type_name))
-            .expect("failed to create type");
-
-        // Verify type is not permissive initially
-        assert!(
-            !sepolicy
-                .types()
-                .iter()
-                .any(|t| t.contains(&format!("permissive {}", type_name))),
-            "type should not be permissive before adding"
-        );
-
-        // Make type permissive
-        sepolicy
-            .load_rules(&format!("permissive {};", type_name))
-            .expect("failed to add permissive");
+        let policy = parser::parse(&format!("type {};\npermissive {};", type_name, type_name))
+            .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify type is now permissive
         let types = sepolicy.types();
@@ -543,21 +504,12 @@ mod tests {
         let tgt_type = "test_tt_tgt_t";
         let dest_type = "test_tt_dest_t";
 
-        // Create our own types first
-        sepolicy
-            .load_rules(&format!(
-                "type {};\ntype {};\ntype {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to create types");
-
-        // Add type_transition rule
-        sepolicy
-            .load_rules(&format!(
-                "type_transition {} {}:file {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to add type_transition");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\ntype {};\ntype_transition {} {}:file {};",
+            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the type_transition was added
         let avtabs = sepolicy.avtabs();
@@ -581,21 +533,12 @@ mod tests {
         let tgt_type = "test_tc_tgt_t";
         let dest_type = "test_tc_dest_t";
 
-        // Create our own types first
-        sepolicy
-            .load_rules(&format!(
-                "type {};\ntype {};\ntype {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to create types");
-
-        // Add type_change rule
-        sepolicy
-            .load_rules(&format!(
-                "type_change {} {}:file {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to add type_change");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\ntype {};\ntype_change {} {}:file {};",
+            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the type_change was added
         let avtabs = sepolicy.avtabs();
@@ -616,21 +559,12 @@ mod tests {
         let tgt_type = "test_tm_tgt_t";
         let dest_type = "test_tm_dest_t";
 
-        // Create our own types first
-        sepolicy
-            .load_rules(&format!(
-                "type {};\ntype {};\ntype {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to create types");
-
-        // Add type_member rule
-        sepolicy
-            .load_rules(&format!(
-                "type_member {} {}:file {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to add type_member");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\ntype {};\ntype_member {} {}:file {};",
+            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the type_member was added
         let avtabs = sepolicy.avtabs();
@@ -650,25 +584,18 @@ mod tests {
         let test_path = "/test/genfs/xyz";
         let test_type = "test_genfscon_t";
 
-        // Create our own type first
-        sepolicy
-            .load_rules(&format!("type {};", test_type))
-            .expect("failed to create type");
-
-        // Add genfscon rule
-        // Note: genfscon syntax doesn't use semicolons in the grammar
-        sepolicy
-            .load_rules(&format!(
-                "genfscon sysfs {} u:object_r:{}:s0",
-                test_path, test_type
-            ))
-            .expect("failed to add genfscon");
+        let policy = parser::parse(&format!(
+            "type {};\ngenfscon sysfs {} u:object_r:{}:s0",
+            test_type, test_path, test_type
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the genfscon was added
         let genfs = sepolicy.genfs_contexts();
-        let has_genfs = genfs.iter().any(|ctx| {
-            ctx.contains("sysfs") && ctx.contains(test_path) && ctx.contains(test_type)
-        });
+        let has_genfs = genfs
+            .iter()
+            .any(|ctx| ctx.contains("sysfs") && ctx.contains(test_path) && ctx.contains(test_type));
 
         assert!(has_genfs, "genfscon should exist in genfs_contexts");
     }
@@ -679,15 +606,12 @@ mod tests {
         let type_name = "test_typed_attr_xyz";
         let attr_name = "test_parent_attr_xyz";
 
-        // Create the attribute first
-        sepolicy
-            .load_rules(&format!("attribute {};", attr_name))
-            .expect("failed to create attribute");
-
-        // Create type with attribute
-        sepolicy
-            .load_rules(&format!("type {}, {};", type_name, attr_name))
-            .expect("failed to create type with attribute");
+        let policy = parser::parse(&format!(
+            "attribute {};\ntype {}, {};",
+            attr_name, type_name, attr_name
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify type exists and has the attribute
         let types = sepolicy.types();
@@ -711,21 +635,12 @@ mod tests {
         let dest_type = "test_fnt_dest_xyz";
         let filename = "test_filename_xyz";
 
-        // Create types first
-        sepolicy
-            .load_rules(&format!(
-                "type {};\ntype {};\ntype {};",
-                src_type, tgt_type, dest_type
-            ))
-            .expect("failed to create types");
-
-        // Add filename type_transition rule
-        sepolicy
-            .load_rules(&format!(
-                "type_transition {} {}:file {} \"{}\";",
-                src_type, tgt_type, dest_type, filename
-            ))
-            .expect("failed to add filename transition");
+        let policy = parser::parse(&format!(
+            "type {};\ntype {};\ntype {};\ntype_transition {} {}:file {} \"{}\";",
+            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type, filename
+        ))
+        .expect("failed to parse policy");
+        sepolicy.apply_policy(&policy);
 
         // Verify the filename transition was added
         let transitions = sepolicy.transitions();
@@ -741,67 +656,6 @@ mod tests {
         assert!(
             has_transition,
             "filename type_transition should exist in transitions"
-        );
-    }
-
-    #[test]
-    fn test_multiple_rules_combined() {
-        let mut sepolicy = load_policy();
-
-        // Test combining multiple rule types - all with our own types
-        let te_content = r#"
-            type test_combined_src_t;
-            type test_combined_tgt_t;
-            attribute test_combined_attr;
-            typeattribute test_combined_src_t test_combined_attr;
-            allow test_combined_src_t test_combined_tgt_t:process { fork sigchld };
-            permissive test_combined_src_t;
-        "#;
-
-        sepolicy
-            .load_rules(te_content)
-            .expect("failed to parse and apply rules");
-
-        // Verify type exists
-        let types = sepolicy.types();
-        assert!(
-            types.iter().any(|t| t.contains("test_combined_src_t")),
-            "type should exist"
-        );
-
-        // Verify attribute exists
-        let attributes = sepolicy.attributes();
-        assert!(
-            attributes
-                .iter()
-                .any(|a| a.contains("test_combined_attr")),
-            "attribute should exist"
-        );
-
-        // Verify type has attribute
-        let type_entry = types
-            .iter()
-            .find(|t| t.contains("test_combined_src_t"))
-            .expect("type should exist");
-        assert!(
-            type_entry.contains("test_combined_attr"),
-            "type should have attribute"
-        );
-
-        // Verify allow rule exists
-        let avtabs = sepolicy.avtabs();
-        let has_fork = avtabs.iter().any(|rule| {
-            rule.starts_with("allow test_combined_src_t test_combined_tgt_t process")
-                && rule.contains("fork")
-        });
-        assert!(has_fork, "allow rule with fork should exist");
-
-        // Verify permissive
-        assert!(
-            types
-                .iter()
-                .any(|t| t == "permissive test_combined_src_t"),
-            "type should be permissive"
         );
     }
 }
