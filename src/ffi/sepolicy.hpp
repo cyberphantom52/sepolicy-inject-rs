@@ -47,6 +47,13 @@ class SePolicyImpl {
   void emit_xperm_rule(const avtab_ptr_t node,
                        rust::Vec<rust::String> &out) const;
 
+  // Rule modification methods
+  avtab_ptr_t find_avtab_node(avtab_key_t *key);
+  avtab_ptr_t insert_avtab_node(avtab_key_t *key);
+  avtab_ptr_t get_avtab_node(avtab_key_t *key);
+  bool add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect);
+  bool remove_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect);
+
 public:
   explicit SePolicyImpl(policydb *db) : db(db) {}
   ~SePolicyImpl();

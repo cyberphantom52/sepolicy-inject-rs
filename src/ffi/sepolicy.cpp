@@ -485,3 +485,116 @@ rust::Vec<rust::String> SePolicy::genfs_contexts() const noexcept {
 
   return out;
 }
+
+bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
+                            int effect) {
+  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
+  if (!src)
+    return false;
+
+  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
+  if (!tgt)
+    return false;
+
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
+  if (!cls)
+    return false;
+
+  auto perm = hashtab_find<perm_datum_t>(cls->permissions.table, p);
+  if (!perm && cls->comdatum)
+    perm = hashtab_find<perm_datum_t>(cls->comdatum->permissions.table, p);
+  if (!perm)
+    return false;
+
+  avtab_key_t key{};
+  key.source_type = src->s.value;
+  key.target_type = tgt->s.value;
+  key.target_class = cls->s.value;
+  key.specified = effect;
+
+  avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key);
+  if (!node) {
+    avtab_datum_t avdatum{};
+    // AUDITDENY (dontaudit) uses inverted logic - initialize to all bits set
+    avdatum.data = key.specified == AVTAB_AUDITDENY ? ~0U : 0U;
+    node = avtab_insert_nonunique(&db->te_avtab, &key, &avdatum);
+  }
+
+  if (effect == AVTAB_AUDITDENY) {
+    // dontaudit uses inverted logic: clear the bit to add the permission
+    node->datum.data &= ~(1U << (perm->s.value - 1));
+  } else {
+    node->datum.data |= 1U << (perm->s.value - 1);
+  }
+  return true;
+}
+
+bool SePolicyImpl::remove_rule(rust::Str s, rust::Str t, rust::Str c,
+                               rust::Str p, int effect) {
+  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
+  if (!src)
+    return false;
+
+  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
+  if (!tgt)
+    return false;
+
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
+  if (!cls)
+    return false;
+
+  auto perm = hashtab_find<perm_datum_t>(cls->permissions.table, p);
+  if (!perm && cls->comdatum)
+    perm = hashtab_find<perm_datum_t>(cls->comdatum->permissions.table, p);
+  if (!perm)
+    return false;
+
+  avtab_key_t key{};
+  key.source_type = src->s.value;
+  key.target_type = tgt->s.value;
+  key.target_class = cls->s.value;
+  key.specified = effect;
+
+  avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key);
+  if (!node)
+    return true; // Nothing to remove
+
+  node->datum.data &= ~(1U << (perm->s.value - 1));
+  return true;
+}
+
+void SePolicy::allow(rust::Slice<rust::Str const> src,
+                     rust::Slice<rust::Str const> tgt,
+                     rust::Slice<rust::Str const> cls,
+                     rust::Slice<rust::Str const> perm) noexcept {
+  for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
+    inner->add_rule(s, t, c, p, AVTAB_ALLOWED);
+  });
+}
+
+void SePolicy::deny(rust::Slice<rust::Str const> src,
+                    rust::Slice<rust::Str const> tgt,
+                    rust::Slice<rust::Str const> cls,
+                    rust::Slice<rust::Str const> perm) noexcept {
+  for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
+    inner->remove_rule(s, t, c, p, AVTAB_ALLOWED);
+  });
+}
+
+void SePolicy::auditallow(rust::Slice<rust::Str const> src,
+                          rust::Slice<rust::Str const> tgt,
+                          rust::Slice<rust::Str const> cls,
+                          rust::Slice<rust::Str const> perm) noexcept {
+  for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
+    inner->add_rule(s, t, c, p, AVTAB_AUDITALLOW);
+  });
+}
+
+void SePolicy::dontaudit(rust::Slice<rust::Str const> src,
+                         rust::Slice<rust::Str const> tgt,
+                         rust::Slice<rust::Str const> cls,
+                         rust::Slice<rust::Str const> perm) noexcept {
+  for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
+    inner->add_rule(s, t, c, p, AVTAB_AUDITDENY);
+  });
+}
