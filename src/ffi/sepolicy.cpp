@@ -487,17 +487,11 @@ rust::Vec<rust::String> SePolicy::genfs_contexts() const noexcept {
 }
 
 bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
-                            int effect) {
+                            int effect, bool remove) {
   auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
-  if (!src)
-    return false;
-
   auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
-  if (!tgt)
-    return false;
-
   auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
-  if (!cls)
+  if (!src || !tgt || !cls)
     return false;
 
   auto perm = hashtab_find<perm_datum_t>(cls->permissions.table, p);
@@ -514,52 +508,20 @@ bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
 
   avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key);
   if (!node) {
+    if (remove)
+      return true; // Nothing to remove
     avtab_datum_t avdatum{};
     // AUDITDENY (dontaudit) uses inverted logic - initialize to all bits set
     avdatum.data = key.specified == AVTAB_AUDITDENY ? ~0U : 0U;
     node = avtab_insert_nonunique(&db->te_avtab, &key, &avdatum);
   }
 
-  if (effect == AVTAB_AUDITDENY) {
-    // dontaudit uses inverted logic: clear the bit to add the permission
-    node->datum.data &= ~(1U << (perm->s.value - 1));
+  uint32_t bit = 1U << (perm->s.value - 1);
+  if (remove || effect == AVTAB_AUDITDENY) {
+    node->datum.data &= ~bit;
   } else {
-    node->datum.data |= 1U << (perm->s.value - 1);
+    node->datum.data |= bit;
   }
-  return true;
-}
-
-bool SePolicyImpl::remove_rule(rust::Str s, rust::Str t, rust::Str c,
-                               rust::Str p, int effect) {
-  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
-  if (!src)
-    return false;
-
-  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
-  if (!tgt)
-    return false;
-
-  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
-  if (!cls)
-    return false;
-
-  auto perm = hashtab_find<perm_datum_t>(cls->permissions.table, p);
-  if (!perm && cls->comdatum)
-    perm = hashtab_find<perm_datum_t>(cls->comdatum->permissions.table, p);
-  if (!perm)
-    return false;
-
-  avtab_key_t key{};
-  key.source_type = src->s.value;
-  key.target_type = tgt->s.value;
-  key.target_class = cls->s.value;
-  key.specified = effect;
-
-  avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key);
-  if (!node)
-    return true; // Nothing to remove
-
-  node->datum.data &= ~(1U << (perm->s.value - 1));
   return true;
 }
 
@@ -577,7 +539,7 @@ void SePolicy::deny(rust::Slice<rust::Str const> src,
                     rust::Slice<rust::Str const> cls,
                     rust::Slice<rust::Str const> perm) noexcept {
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
-    inner->remove_rule(s, t, c, p, AVTAB_ALLOWED);
+    inner->add_rule(s, t, c, p, AVTAB_ALLOWED, true);
   });
 }
 
@@ -597,4 +559,347 @@ void SePolicy::dontaudit(rust::Slice<rust::Str const> src,
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
     inner->add_rule(s, t, c, p, AVTAB_AUDITDENY);
   });
+}
+
+// Extended permissions (ioctl) rule
+bool SePolicyImpl::add_xperm_rule(rust::Str s, rust::Str t, rust::Str c,
+                                  const XPerm &xp, int effect) {
+  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
+  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
+  if (!src || !tgt || !cls)
+    return false;
+
+  avtab_key_t key{};
+  key.source_type = src->s.value;
+  key.target_type = tgt->s.value;
+  key.target_class = cls->s.value;
+  key.specified = effect;
+
+  // Find existing xperm nodes
+  avtab_ptr_t node_list[257] = {nullptr};
+#define driver_node (node_list[256])
+
+  for (avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key); node;
+       node = avtab_search_node_next(node, key.specified)) {
+    if (node->datum.xperms->specified == AVTAB_XPERMS_IOCTLDRIVER) {
+      driver_node = node;
+    } else if (node->datum.xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION) {
+      node_list[node->datum.xperms->driver] = node;
+    }
+  }
+
+  auto new_node = [&](uint8_t specified, uint8_t driver) -> avtab_ptr_t {
+    avtab_datum_t avdatum{};
+    auto node = avtab_insert_nonunique(&db->te_avtab, &key, &avdatum);
+    node->datum.xperms =
+        static_cast<avtab_extended_perms_t *>(calloc(1, sizeof(avtab_extended_perms_t)));
+    node->datum.xperms->specified = specified;
+    node->datum.xperms->driver = driver;
+    return node;
+  };
+
+  if (ioctl_driver(xp.low) != ioctl_driver(xp.high)) {
+    // Range spans multiple drivers - use driver node
+    if (!driver_node)
+      driver_node = new_node(AVTAB_XPERMS_IOCTLDRIVER, 0);
+    for (int i = ioctl_driver(xp.low); i <= ioctl_driver(xp.high); ++i)
+      xperm_set(i, driver_node->datum.xperms->perms);
+  } else {
+    // Single driver - use function node
+    uint8_t driver = ioctl_driver(xp.low);
+    auto node = node_list[driver];
+    if (!node) {
+      node = new_node(AVTAB_XPERMS_IOCTLFUNCTION, driver);
+      node_list[driver] = node;
+    }
+    for (int i = ioctl_func(xp.low); i <= ioctl_func(xp.high); ++i)
+      xperm_set(i, node->datum.xperms->perms);
+  }
+
+#undef driver_node
+  return true;
+}
+
+void SePolicy::allowxperm(rust::Slice<rust::Str const> src,
+                          rust::Slice<rust::Str const> tgt,
+                          rust::Slice<rust::Str const> cls,
+                          rust::Slice<XPerm const> xperm) noexcept {
+  for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
+    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_ALLOWED);
+  });
+}
+
+void SePolicy::auditallowxperm(rust::Slice<rust::Str const> src,
+                               rust::Slice<rust::Str const> tgt,
+                               rust::Slice<rust::Str const> cls,
+                               rust::Slice<XPerm const> xperm) noexcept {
+  for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
+    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_AUDITALLOW);
+  });
+}
+
+void SePolicy::dontauditxperm(rust::Slice<rust::Str const> src,
+                              rust::Slice<rust::Str const> tgt,
+                              rust::Slice<rust::Str const> cls,
+                              rust::Slice<XPerm const> xperm) noexcept {
+  for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
+    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_DONTAUDIT);
+  });
+}
+
+// Permissive/enforce
+bool SePolicyImpl::set_type_state(rust::Str type_name, bool permissive) {
+  auto type = hashtab_find<type_datum_t>(db->p_types.table, type_name);
+  if (!type)
+    return false;
+
+  return ebitmap_set_bit(&db->permissive_map, type->s.value, permissive) == 0;
+}
+
+void SePolicy::permissive(rust::Slice<rust::Str const> types) noexcept {
+  for (auto t : types) {
+    inner->set_type_state(t, true);
+  }
+}
+
+void SePolicy::enforce(rust::Slice<rust::Str const> types) noexcept {
+  for (auto t : types) {
+    inner->set_type_state(t, false);
+  }
+}
+
+// Type attribute association
+bool SePolicyImpl::add_typeattribute(rust::Str type, rust::Str attr) {
+  auto type_d = hashtab_find<type_datum_t>(db->p_types.table, type);
+  auto attr_d = hashtab_find<type_datum_t>(db->p_types.table, attr);
+  if ((!type_d || type_d->flavor == TYPE_ATTRIB) ||
+      (!attr_d || attr_d->flavor != TYPE_ATTRIB))
+  {
+    return false;
+  }
+
+
+  ebitmap_set_bit(&db->type_attr_map[type_d->s.value - 1], attr_d->s.value - 1,1);
+  ebitmap_set_bit(&db->attr_type_map[attr_d->s.value - 1], type_d->s.value - 1,1);
+
+  // Update constraint expressions that reference this attribute
+  for_each_hashtab(db->p_classes.table, [&](hashtab_ptr_t node) {
+    auto cls = static_cast<class_datum_t *>(node->datum);
+    for_each_list(cls->constraints, [&](constraint_node_t *n) {
+      for_each_list(n->expr, [&](constraint_expr_t *e) {
+        if (e->expr_type == CEXPR_NAMES &&
+            ebitmap_get_bit(&e->type_names->types, attr_d->s.value - 1)) {
+          ebitmap_set_bit(&e->names, type_d->s.value - 1, 1);
+        }
+      });
+    });
+  });
+
+  return true;
+}
+
+void SePolicy::typeattribute(rust::Slice<rust::Str const> ty,
+                             rust::Slice<rust::Str const> attrs) noexcept {
+  for (auto t : ty) {
+    for (auto a : attrs) {
+      inner->add_typeattribute(t, a);
+    }
+  }
+}
+
+// Create new type or attribute
+bool SePolicyImpl::add_type(rust::Str type_name, uint32_t flavor) {
+  if (hashtab_find<type_datum_t>(db->p_types.table, type_name))
+    return true; // Already exists
+
+  auto type = static_cast<type_datum_t *>(malloc(sizeof(type_datum_t)));
+  type_datum_init(type);
+  type->primary = 1;
+  type->flavor = flavor;
+
+  uint32_t value = 0;
+  char *name = dup_str(type_name);
+  if (symtab_insert(db, SYM_TYPES, name, type, SCOPE_DECL, 1, &value)) {
+    free(name);
+    free(type);
+    return false;
+  }
+  type->s.value = value;
+  ebitmap_set_bit(&db->global->branch_list->declared.p_types_scope, value - 1,
+                  1);
+
+  auto new_size = sizeof(ebitmap_t) * db->p_types.nprim;
+  db->type_attr_map = static_cast<ebitmap_t *>(realloc(db->type_attr_map, new_size));
+  db->attr_type_map = static_cast<ebitmap_t *>(realloc(db->attr_type_map, new_size));
+  ebitmap_init(&db->type_attr_map[value - 1]);
+  ebitmap_init(&db->attr_type_map[value - 1]);
+  ebitmap_set_bit(&db->type_attr_map[value - 1], value - 1, 1);
+
+  // Re-index
+  if (policydb_index_decls(nullptr, db) ||
+      policydb_index_classes(db) ||
+      policydb_index_others(nullptr, db, 0))
+  {
+    return false;
+  }
+
+  // Add type to all roles
+  for (uint32_t i = 0; i < db->p_roles.nprim; ++i) {
+    ebitmap_set_bit(&db->role_val_to_struct[i]->types.negset, value - 1, 0);
+    ebitmap_set_bit(&db->role_val_to_struct[i]->types.types, value - 1, 1);
+    type_set_expand(&db->role_val_to_struct[i]->types,
+                    &db->role_val_to_struct[i]->cache, db, 0);
+  }
+
+  return true;
+}
+
+void SePolicy::type(rust::Str ty, rust::Slice<rust::Str const> attrs) noexcept {
+  if (!inner->add_type(ty, TYPE_TYPE))
+    return;
+
+  for (auto a : attrs) {
+    inner->add_typeattribute(ty, a);
+  }
+}
+
+void SePolicy::attribute(rust::Str name) noexcept {
+  inner->add_type(name, TYPE_ATTRIB);
+}
+
+// Type rules (type_transition, type_change, type_member)
+bool SePolicyImpl::add_type_rule(rust::Str s, rust::Str t, rust::Str c,
+                                 rust::Str d, int effect) {
+  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
+  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
+  auto def = hashtab_find<type_datum_t>(db->p_types.table, d);
+  if (!src || !tgt || !cls || !def)
+    return false;
+
+  avtab_key_t key{};
+  key.source_type = src->s.value;
+  key.target_type = tgt->s.value;
+  key.target_class = cls->s.value;
+  key.specified = effect;
+
+  avtab_ptr_t node = avtab_search_node(&db->te_avtab, &key);
+  if (!node) {
+    avtab_datum_t avdatum{};
+    node = avtab_insert_nonunique(&db->te_avtab, &key, &avdatum);
+  }
+  node->datum.data = def->s.value;
+
+  return true;
+}
+
+bool SePolicyImpl::add_filename_trans(rust::Str s, rust::Str t, rust::Str c,
+                                      rust::Str d, rust::Str o) {
+  auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
+  auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
+  auto def = hashtab_find<type_datum_t>(db->p_types.table, d);
+  if (!src || !tgt || !cls || !def)
+    return false;
+
+  std::string obj_name(o.data(), o.size());
+
+  filename_trans_key_t key{};
+  key.ttype = tgt->s.value;
+  key.tclass = cls->s.value;
+  // We use const_cast because filename_trans_key_t::name is char* not const char*, but we're only using it for the lookup.
+  key.name = const_cast<char *>(obj_name.c_str());
+
+  auto trans = static_cast<filename_trans_datum_t *>(
+      hashtab_search(db->filename_trans, reinterpret_cast<hashtab_key_t>(&key)));
+  filename_trans_datum_t *last = nullptr;
+
+  while (trans) {
+    if (ebitmap_get_bit(&trans->stypes, src->s.value - 1)) {
+      trans->otype = def->s.value;
+      return true;
+    }
+    if (trans->otype == def->s.value)
+      break;
+    last = trans;
+    trans = trans->next;
+  }
+
+  if (!trans) {
+    trans = static_cast<filename_trans_datum_t *>(calloc(1, sizeof(*trans)));
+    ebitmap_init(&trans->stypes);
+    trans->otype = def->s.value;
+  }
+
+  if (last) {
+    last->next = trans;
+  } else {
+    auto new_key = static_cast<filename_trans_key_t *>(malloc(sizeof(filename_trans_key_t)));
+    new_key->ttype = key.ttype;
+    new_key->tclass = key.tclass;
+    new_key->name = strdup(key.name);
+    hashtab_insert(db->filename_trans, reinterpret_cast<hashtab_key_t>(new_key), trans);
+  }
+
+  db->filename_trans_count++;
+  return ebitmap_set_bit(&trans->stypes, src->s.value - 1, 1) == 0;
+}
+
+void SePolicy::type_transition(rust::Str src, rust::Str tgt, rust::Str cls,
+                               rust::Str dest, rust::Str obj) noexcept {
+  if (obj.empty()) {
+    inner->add_type_rule(src, tgt, cls, dest, AVTAB_TRANSITION);
+  } else {
+    inner->add_filename_trans(src, tgt, cls, dest, obj);
+  }
+}
+
+void SePolicy::type_change(rust::Str src, rust::Str tgt, rust::Str cls,
+                           rust::Str dest) noexcept {
+  inner->add_type_rule(src, tgt, cls, dest, AVTAB_CHANGE);
+}
+
+void SePolicy::type_member(rust::Str src, rust::Str tgt, rust::Str cls,
+                           rust::Str dest) noexcept {
+  inner->add_type_rule(src, tgt, cls, dest, AVTAB_MEMBER);
+}
+
+// Genfscon
+bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
+                                rust::Str context) {
+  context_struct_t *ctx;
+  if (context_from_string(nullptr, db, &ctx, context.data(), context.size()))
+    return false;
+
+  auto fs = list_find(db->genfs, [&](genfs_t *n) {
+    return str_eq(n->fstype, fs_name);
+  });
+  if (!fs) {
+    fs = static_cast<genfs_t *>(calloc(1, sizeof(genfs_t)));
+    fs->fstype = dup_str(fs_name);
+    fs->next = db->genfs;
+    db->genfs = fs;
+  }
+
+  auto o_ctx = list_find(fs->head, [&](ocontext_t *n) {
+    return str_eq(n->u.name, path);
+  });
+  if (!o_ctx) {
+    o_ctx = static_cast<ocontext_t *>(calloc(1, sizeof(ocontext_t)));
+    o_ctx->u.name = dup_str(path);
+    o_ctx->next = fs->head;
+    fs->head = o_ctx;
+  }
+
+  memset(o_ctx->context, 0, sizeof(o_ctx->context));
+  memcpy(&o_ctx->context[0], ctx, sizeof(*ctx));
+  free(ctx);
+
+  return true;
+}
+
+void SePolicy::genfscon(rust::Str fs, rust::Str path,
+                        rust::Str context) noexcept {
+  inner->add_genfscon(fs, path, context);
 }

@@ -16,7 +16,13 @@ int context_from_string(sepol_handle_t *handle, const policydb_t *policydb,
 int context_to_string(sepol_handle_t *handle, const policydb_t *policydb,
                       const context_struct_t *context, char **result,
                       size_t *result_len);
+int policydb_index_decls(sepol_handle_t *handle, policydb_t *p);
+int type_set_expand(type_set_t *set, ebitmap_t *t, policydb_t *p,
+                    unsigned char alwaysexpand);
 __END_DECLS
+
+#define ioctl_driver(x) ((x >> 8) & 0xFF)
+#define ioctl_func(x) (x & 0xFF)
 
 // sepolicy paths
 #define PLAT_POLICY_DIR "/system/etc/selinux/"
@@ -29,6 +35,8 @@ __END_DECLS
 // selinuxfs paths
 #define SELINUX_MNT "/sys/fs/selinux"
 #define SELINUX_VERSION SELINUX_MNT "/policyvers"
+
+struct XPerm;
 
 class SePolicyImpl {
   policydb *db;
@@ -48,11 +56,18 @@ class SePolicyImpl {
                        rust::Vec<rust::String> &out) const;
 
   // Rule modification methods
-  avtab_ptr_t find_avtab_node(avtab_key_t *key);
-  avtab_ptr_t insert_avtab_node(avtab_key_t *key);
-  avtab_ptr_t get_avtab_node(avtab_key_t *key);
-  bool add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect);
-  bool remove_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect);
+  bool add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect,
+                bool remove = false);
+  bool add_xperm_rule(rust::Str s, rust::Str t, rust::Str c, const XPerm &xp,
+                      int effect);
+  bool add_type_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str d,
+                     int effect);
+  bool add_filename_trans(rust::Str s, rust::Str t, rust::Str c, rust::Str d,
+                          rust::Str o);
+  bool add_genfscon(rust::Str fs_name, rust::Str path, rust::Str context);
+  bool add_type(rust::Str type_name, uint32_t flavor);
+  bool set_type_state(rust::Str type_name, bool permissive);
+  bool add_typeattribute(rust::Str type, rust::Str attr);
 
 public:
   explicit SePolicyImpl(policydb *db) : db(db) {}
