@@ -272,7 +272,7 @@ void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
                                 rust::Vec<rust::String> &out) const {
   auto source = this->type_name(node->key.source_type);
   auto target = this->type_name(node->key.target_type);
-  auto class_ = this->type_name(node->key.target_class);
+  auto class_ = this->class_name(node->key.target_class);
   uint16_t class_val = node->key.target_class;
   if (!source || !target || !class_)
     return;
@@ -342,7 +342,7 @@ void SePolicyImpl::emit_type_rule(const avtab_ptr_t node,
                                   rust::Vec<rust::String> &out) const {
   auto source = this->type_name(node->key.source_type);
   auto target = this->type_name(node->key.target_type);
-  auto class_ = this->type_name(node->key.target_class);
+  auto class_ = this->class_name(node->key.target_class);
   if (!source || !target || !class_)
     return;
 
@@ -365,7 +365,7 @@ void SePolicyImpl::emit_xperm_rule(const avtab_ptr_t node,
                                    rust::Vec<rust::String> &out) const {
   auto source = this->type_name(node->key.source_type);
   auto target = this->type_name(node->key.target_type);
-  auto class_ = this->type_name(node->key.target_class);
+  auto class_ = this->class_name(node->key.target_class);
   if (!source || !target || !class_)
     return;
 
