@@ -29,10 +29,6 @@ struct Cli {
     #[arg(long, group = "source", conflicts_with_all = ["load", "load_split"])]
     compile_split: bool,
 
-    /// Apply rules from a .te file (can be specified multiple times)
-    #[arg(long = "apply", short = 'a', value_name = "FILE")]
-    apply: Vec<PathBuf>,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -44,6 +40,17 @@ enum Commands {
         /// Type of rules to print
         #[arg(value_enum, default_value_t = RuleType::All)]
         rule_type: RuleType,
+    },
+
+    /// Patch the policy with rules from .te files
+    Patch {
+        /// .te file(s) to apply (can be specified multiple times)
+        #[arg(required = true, value_name = "FILE")]
+        files: Vec<PathBuf>,
+
+        /// M4 macro definition file (can be specified multiple times)
+        #[arg(long = "macro", short = 'm', value_name = "FILE")]
+        macros: Vec<PathBuf>,
     },
 }
 
@@ -96,14 +103,6 @@ fn main() -> ExitCode {
         }
     };
 
-    // Apply .te files if specified
-    for te_path in &cli.apply {
-        if let Err(e) = sepolicy.load_rules_from_file(te_path) {
-            eprintln!("Error applying {}: {}", te_path.display(), e);
-            return ExitCode::FAILURE;
-        }
-    }
-
     // Handle commands
     match cli.command {
         Some(Commands::Print { rule_type }) => {
@@ -119,6 +118,15 @@ fn main() -> ExitCode {
             for rule in rules {
                 println!("{}", rule);
             }
+        }
+        Some(Commands::Patch { files, macros }) => {
+            for te_path in &files {
+                if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
+                    eprintln!("Error applying {}: {}", te_path.display(), e);
+                    return ExitCode::FAILURE;
+                }
+            }
+            println!("Successfully patched policy with {} file(s)", files.len());
         }
         None => {
             // No command specified, show basic info
@@ -136,6 +144,7 @@ fn main() -> ExitCode {
             println!("  Genfs Contexts: {}", genfs.len());
             println!();
             println!("Use 'print' subcommand to display rules.");
+            println!("Use 'patch' subcommand to apply .te files.");
         }
     }
 
