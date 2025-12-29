@@ -29,6 +29,10 @@ struct Cli {
     #[arg(long, group = "source", conflicts_with_all = ["load", "load_split"])]
     compile_split: bool,
 
+    /// Apply rules from a .te file (can be specified multiple times)
+    #[arg(long = "apply", short = 'a', value_name = "FILE")]
+    apply: Vec<PathBuf>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -84,13 +88,21 @@ fn main() -> ExitCode {
         }
     };
 
-    let sepolicy = match sepolicy {
+    let mut sepolicy = match sepolicy {
         Some(s) => s,
         None => {
             eprintln!("Error: Cannot load policy");
             return ExitCode::FAILURE;
         }
     };
+
+    // Apply .te files if specified
+    for te_path in &cli.apply {
+        if let Err(e) = sepolicy.load_rules_from_file(te_path) {
+            eprintln!("Error applying {}: {}", te_path.display(), e);
+            return ExitCode::FAILURE;
+        }
+    }
 
     // Handle commands
     match cli.command {
