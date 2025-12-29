@@ -139,10 +139,44 @@ impl SePolicy {
     }
 
     /// Load and apply rules from a .te file
-    pub fn load_rules_from_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+    ///
+    /// # Arguments
+    /// * `path` - Path to the .te file
+    /// * `macro_paths` - Paths to M4 macro definition files (can be empty)
+    pub fn load_rules_from_file<P, I>(
+        &mut self,
+        path: impl AsRef<Path>,
+        macro_paths: I,
+    ) -> Result<(), String>
+    where
+        P: AsRef<Path>,
+        I: IntoIterator<Item = P>,
+    {
+        use m4rs::processor::{Expander, MacroRegistry};
+
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|e| format!("Failed to read file: {}", e))?;
-        let policy = parser::parse(&content).map_err(|e| format!("Parse error: {}", e))?;
+
+        // Load macro definitions
+        let mut registry = MacroRegistry::new();
+        for macro_path in macro_paths {
+            registry
+                .load_file(
+                    macro_path
+                        .as_ref()
+                        .to_str()
+                        .ok_or("Macro path contains invalid UTF-8")?,
+                )
+                .map_err(|e| format!("Failed to load macro file: {}", e))?;
+        }
+
+        // Expand macros
+        let mut expander = Expander::new(registry);
+        let expanded = expander
+            .expand(&content)
+            .map_err(|e| format!("M4 expansion failed: {}", e))?;
+
+        let policy = parser::parse(&expanded).map_err(|e| format!("Parse error: {}", e))?;
         self.apply_policy(&policy);
         Ok(())
     }
