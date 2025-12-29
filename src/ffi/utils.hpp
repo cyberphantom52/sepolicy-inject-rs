@@ -3,9 +3,11 @@
 #include <sepol/policydb/avtab.h>
 #include <sepol/policydb/hashtab.h>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <fcntl.h>
+#include <unistd.h>
 #include "sepolicy.hpp"
 
 #define ALLOW_MOVE_ONLY(clazz)                                                 \
