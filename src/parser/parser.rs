@@ -5,6 +5,7 @@ use pest_derive::Parser;
 use thiserror::Error;
 
 use super::ast::*;
+use crate::XPerm;
 
 #[derive(Parser)]
 #[grammar = "src/parser/policy.pest"]
@@ -186,11 +187,13 @@ fn parse_avxrule_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, Par
 
     let mut names_list: Vec<IdSet> = Vec::new();
     let mut operation = String::new();
+    let mut xperms = Vec::new();
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::names => names_list.push(parse_names(inner)?),
             Rule::IDENTIFIER => operation = inner.as_str().to_string(),
+            Rule::xperm_set => xperms = parse_xperm_set(inner)?,
             _ => {}
         }
     }
@@ -201,8 +204,65 @@ fn parse_avxrule_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, Par
         tgt_types: names_list.get(1).cloned().unwrap_or_default(),
         obj_classes: names_list.get(2).cloned().unwrap_or_default(),
         operation,
-        xperms: names_list.get(3).cloned().unwrap_or_default(),
+        xperms,
     }))
+}
+
+fn parse_xperm_set(pair: pest::iterators::Pair<Rule>) -> Result<Vec<XPerm>, ParseError> {
+    let mut xperms = Vec::new();
+
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::xperm_element {
+            if let Some(xperm) = parse_xperm_element(inner)? {
+                xperms.push(xperm);
+            }
+        }
+    }
+
+    Ok(xperms)
+}
+
+fn parse_xperm_element(pair: pest::iterators::Pair<Rule>) -> Result<Option<XPerm>, ParseError> {
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::xperm_range => {
+                let mut hex_values = Vec::new();
+                for hex in inner.into_inner() {
+                    if hex.as_rule() == Rule::HEX_NUMBER {
+                        if let Some(val) = parse_hex_value(hex.as_str()) {
+                            hex_values.push(val);
+                        }
+                    }
+                }
+                if hex_values.len() == 2 {
+                    return Ok(Some(XPerm {
+                        low: hex_values[0],
+                        high: hex_values[1],
+                        reset: false,
+                    }));
+                }
+            }
+            Rule::HEX_NUMBER => {
+                if let Some(val) = parse_hex_value(inner.as_str()) {
+                    return Ok(Some(XPerm {
+                        low: val,
+                        high: val,
+                        reset: false,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+fn parse_hex_value(s: &str) -> Option<u16> {
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u16::from_str_radix(s, 16).ok()
 }
 
 fn parse_typerule_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseError> {

@@ -129,7 +129,14 @@ role_allow = { ^"allow" ~ names ~ names ~ ";"+ }
 
 avrule_def = { (^"allow" | ^"dontaudit" | ^"auditallow" | ^"neverallow") ~ names ~ names ~ ":" ~ names ~ names ~ ";"+ }
 
-avxrule_def = { (^"allowxperm" | ^"dontauditxperm" | ^"auditallowxperm" | ^"neverallowxperm") ~ names ~ names ~ ":" ~ names ~ IDENTIFIER ~ names ~ ";"+ }
+avxrule_def = { (^"allowxperm" | ^"dontauditxperm" | ^"auditallowxperm" | ^"neverallowxperm") ~ names ~ names ~ ":" ~ names ~ IDENTIFIER ~ xperm_set ~ ";"+ }
+
+// XPerm set for extended permission rules
+xperm_set = { "{" ~ xperm_element+ ~ "}" | xperm_element }
+
+// Accept hex numbers, ranges, or identifiers (for unexpanded macros)
+xperm_range = { HEX_NUMBER ~ "-" ~ HEX_NUMBER }
+xperm_element = { xperm_range | HEX_NUMBER | IDENTIFIER }
 
 // =============================================================================
 // Type Rules (type_transition, type_change, type_member)
