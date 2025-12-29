@@ -22,11 +22,51 @@ cargo build --release
 
 The binary will be at `target/release/sepolicy-inject-rs`.
 
+### Building for Android
+
+To build for Android, you'll need:
+
+1. **Android NDK**: Download and install the Android NDK (r29 or later recommended)
+2. **cargo-ndk**: Install the cargo-ndk tool:
+   ```bash
+   cargo install cargo-ndk
+   ```
+3. **Rust Android targets**: Install the target for your desired architecture:
+   ```bash
+   rustup target add aarch64-linux-android  # For arm64-v8a
+   rustup target add armv7-linux-androideabi  # For armeabi-v7a
+   rustup target add x86_64-linux-android  # For x86_64
+   rustup target add i686-linux-android  # For x86
+   ```
+
+Then build with:
+
+```bash
+# Set Android NDK path to your NDK installation directory
+# Replace the path below with your actual NDK path
+export ANDROID_NDK_HOME=/path/to/your/android-ndk
+
+# Build for arm64-v8a (most common)
+# Use -P to specify Android platform version
+cargo ndk -t arm64-v8a -P 30 build --release
+
+# Build for other architectures
+cargo ndk -t armeabi-v7a -P 30 build --release
+cargo ndk -t x86_64 -P 30 build --release
+cargo ndk -t x86 -P 30 build --release
+
+# Build for all architectures
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -P 30 build --release
+```
+
+The binaries will be at `target/aarch64-linux-android/release/sepolicy-inject-rs` (or corresponding path for other architectures).
+
 ### Dependencies
 
 - Rust 1.70+ (2024 edition)
 - C++ compiler (for building libsepol bindings)
 - libsepol (included as submodule in `selinux/`)
+- **For Android builds**: Android NDK r29+ and `cargo-ndk`
 
 ## Usage
 
