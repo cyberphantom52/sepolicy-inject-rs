@@ -1,4 +1,3 @@
-#include "sepolicy.hpp"
 #include "utils.hpp"
 #include "sepolicy-inject-rs/src/lib.rs.h"
 #include <sepol/policydb/ebitmap.h>
@@ -8,6 +7,20 @@
 static std::string to_string(rust::Str str) {
   return std::string(str.data(), str.size());
 }
+
+const char *CIL_FILES[] = {
+  PLAT_POLICY_DIR "mapping/%s.cil",
+  PLAT_POLICY_DIR "mapping/%s.compat.cil",
+  SYSEXT_POLICY_DIR "mapping/%s.cil",
+  SYSEXT_POLICY_DIR "mapping/%s.compat.cil",
+  SYSEXT_POLICY_DIR "system_ext_sepolicy.cil",
+  PROD_POLICY_DIR "mapping/%s.cil",
+  PROD_POLICY_DIR "product_sepolicy.cil",
+  VEND_POLICY_DIR "nonplat_sepolicy.cil",
+  VEND_POLICY_DIR "plat_pub_versioned.cil",
+  VEND_POLICY_DIR "vendor_sepolicy.cil",
+  ODM_POLICY_DIR "odm_sepolicy.cil",
+};
 
 // Logging helpers that call into Rust's tracing system
 static constexpr const char *LOG_TARGET = "sepolicy::ffi";

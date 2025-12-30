@@ -1,6 +1,5 @@
-#include "cil.hpp"
-#include "mmap.hpp"
 #include "sepolicy-inject-rs/src/lib.rs.h"
+#include "mmap.hpp"
 
 #include <cil/cil.h>
 #include <memory>
