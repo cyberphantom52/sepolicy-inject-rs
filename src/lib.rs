@@ -1,8 +1,9 @@
 use std::path::Path;
 
+pub mod cil;
 pub mod parser;
 
-pub use self::ffi::{SePolicy, XPerm};
+pub use self::ffi::{SePolicy, XPerm, CilPolicy};
 use parser::ast::*;
 
 #[cxx::bridge]
@@ -81,6 +82,21 @@ mod ffi {
         fn from_split_impl() -> UniquePtr<SePolicyImpl>;
         fn compile_split_impl() -> UniquePtr<SePolicyImpl>;
         fn from_data_impl(data: &[u8]) -> UniquePtr<SePolicyImpl>;
+    }
+
+    // CIL Policy FFI
+    struct CilPolicy {
+        inner: UniquePtr<CilPolicyImpl>,
+    }
+
+    unsafe extern "C++" {
+        include!("sepolicy-inject-rs/src/ffi/cil.hpp");
+
+        type CilPolicyImpl;
+
+        fn add_file(self: Pin<&mut CilPolicyImpl>, path: &str) -> bool;
+
+        fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }
 }
 

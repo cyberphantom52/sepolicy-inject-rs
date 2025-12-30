@@ -1,6 +1,5 @@
 #include "sepolicy.hpp"
 #include "utils.hpp"
-#include "mmap.hpp"
 #include "sepolicy-inject-rs/src/lib.rs.h"
 #include <sepol/policydb/ebitmap.h>
 #include <sepol/policydb/policydb.h>
@@ -104,33 +103,20 @@ std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
     return compile_split_impl();
 }
 
-static void load_cil(struct cil_db *db, const char *file) {
-  mmap_data d(file);
-  cil_add_file(db, file, (const char *)d.data(), d.size());
-}
-
 std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   char path[128], plat_ver[10];
-  cil_db_t *db = nullptr;
-  sepol_policydb_t *pdb = nullptr;
   FILE *f;
   int policy_ver;
   const char *cil_file;
 
-  cil_db_init(&db);
-  run_finally fin([db_ptr = &db] { cil_db_destroy(db_ptr); });
-  cil_set_mls(db, 1);
-  cil_set_multiple_decls(db, 1);
-  cil_set_disable_neverallow(db, 1);
-  cil_set_target_platform(db, SEPOL_TARGET_SELINUX);
-  cil_set_attrs_expand_generated(db, 1);
+  CilPolicyImpl cil;
 
   f = fopen(SELINUX_VERSION, "re");
   if (!f)
     return nullptr;
   fscanf(f, "%d", &policy_ver);
   fclose(f);
-  cil_set_policy_version(db, policy_ver);
+  cil.set_policy_version(policy_ver);
 
   // Get mapping version
   f = fopen(VEND_POLICY_DIR "plat_sepolicy_vers.txt", "re");
@@ -140,60 +126,57 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   fclose(f);
 
   // plat
-  load_cil(db, SPLIT_PLAT_CIL);
+  cil.add_file(SPLIT_PLAT_CIL);
 
   sprintf(path, PLAT_POLICY_DIR "mapping/%s.cil", plat_ver);
-  load_cil(db, path);
+  if (access(path, R_OK) == 0)
+    cil.add_file(path);
 
   sprintf(path, PLAT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
   if (access(path, R_OK) == 0)
-    load_cil(db, path);
+    cil.add_file(path);
 
   // system_ext
   sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.cil", plat_ver);
   if (access(path, R_OK) == 0)
-    load_cil(db, path);
+    cil.add_file(path);
 
   sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
   if (access(path, R_OK) == 0)
-    load_cil(db, path);
+    cil.add_file(path);
 
   cil_file = SYSEXT_POLICY_DIR "system_ext_sepolicy.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
   // product
   sprintf(path, PROD_POLICY_DIR "mapping/%s.cil", plat_ver);
   if (access(path, R_OK) == 0)
-    load_cil(db, path);
+    cil.add_file(path);
 
   cil_file = PROD_POLICY_DIR "product_sepolicy.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
   // vendor
   cil_file = VEND_POLICY_DIR "nonplat_sepolicy.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
   cil_file = VEND_POLICY_DIR "plat_pub_versioned.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
   cil_file = VEND_POLICY_DIR "vendor_sepolicy.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
   // odm
   cil_file = ODM_POLICY_DIR "odm_sepolicy.cil";
   if (access(cil_file, R_OK) == 0)
-    load_cil(db, cil_file);
+    cil.add_file(cil_file);
 
-  if (cil_compile(db))
-    return {};
-  if (cil_build_policydb(db, &pdb))
-    return {};
-  return std::make_unique<SePolicyImpl>(&pdb->p);
+  return cil.compile();
 }
 
 rust::Vec<rust::String> SePolicy::attributes() const noexcept {
