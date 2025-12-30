@@ -25,16 +25,24 @@ const char *CIL_FILES[] = {
 // Logging helpers that call into Rust's tracing system
 static constexpr const char *LOG_TARGET = "sepolicy::ffi";
 
-static void ffi_log_info(const std::string &msg) {
-  log_info(LOG_TARGET, msg);
-}
-
-static void ffi_log_error(const std::string &msg) {
-  log_error(LOG_TARGET, msg);
+static void ffi_log_trace(const std::string &msg) {
+  log_trace(LOG_TARGET, msg);
 }
 
 static void ffi_log_debug(const std::string &msg) {
   log_debug(LOG_TARGET, msg);
+}
+
+static void ffi_log_info(const std::string &msg) {
+  log_info(LOG_TARGET, msg);
+}
+
+static void ffi_log_warn(const std::string &msg) {
+  log_warn(LOG_TARGET, msg);
+}
+
+static void ffi_log_error(const std::string &msg) {
+  log_error(LOG_TARGET, msg);
 }
 
 SePolicyImpl::~SePolicyImpl() {
@@ -493,17 +501,28 @@ rust::Vec<rust::String> SePolicy::genfs_contexts() const noexcept {
 
 bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
                             int effect, bool remove) {
+  std::string src_str(s.data(), s.size());
+  std::string tgt_str(t.data(), t.size());
+  std::string cls_str(c.data(), c.size());
+  std::string perm_str(p.data(), p.size());
+
   auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
   auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
   auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
-  if (!src || !tgt || !cls)
+  if (!src || !tgt || !cls) {
+    ffi_log_warn("add_rule: type/class not found - src=" + src_str +
+                 " tgt=" + tgt_str + " cls=" + cls_str);
     return false;
+  }
 
   auto perm = hashtab_find<perm_datum_t>(cls->permissions.table, p);
   if (!perm && cls->comdatum)
     perm = hashtab_find<perm_datum_t>(cls->comdatum->permissions.table, p);
-  if (!perm)
+  if (!perm) {
+    ffi_log_warn("add_rule: permission not found - " + perm_str + " in class " +
+                 cls_str);
     return false;
+  }
 
   avtab_key_t key{};
   key.source_type = src->s.value;
@@ -527,6 +546,9 @@ bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
   } else {
     node->datum.data |= bit;
   }
+
+  ffi_log_trace("add_rule: " + src_str + " " + tgt_str + ":" + cls_str + " " +
+                perm_str + (remove ? " (remove)" : ""));
   return true;
 }
 
@@ -715,8 +737,17 @@ void SePolicy::typeattribute(rust::Slice<rust::Str const> ty,
 
 // Create new type or attribute
 bool SePolicyImpl::add_type(rust::Str type_name, uint32_t flavor) {
-  if (hashtab_find<type_datum_t>(db->p_types.table, type_name))
+  std::string name_str(type_name.data(), type_name.size());
+  const char *flavor_str = (flavor == TYPE_TYPE) ? "type" : "attribute";
+
+  if (hashtab_find<type_datum_t>(db->p_types.table, type_name)) {
+    ffi_log_trace(std::string("add_type: ") + flavor_str + " already exists: " +
+                  name_str);
     return true; // Already exists
+  }
+
+  ffi_log_debug(std::string("add_type: creating ") + flavor_str + ": " +
+                name_str);
 
   auto type = static_cast<type_datum_t *>(malloc(sizeof(type_datum_t)));
   type_datum_init(type);
@@ -726,6 +757,8 @@ bool SePolicyImpl::add_type(rust::Str type_name, uint32_t flavor) {
   uint32_t value = 0;
   char *name = dup_str(type_name);
   if (symtab_insert(db, SYM_TYPES, name, type, SCOPE_DECL, 1, &value)) {
+    ffi_log_error(std::string("add_type: failed to insert ") + flavor_str +
+                  ": " + name_str);
     free(name);
     free(type);
     return false;
@@ -776,12 +809,20 @@ void SePolicy::attribute(rust::Str name) noexcept {
 // Type rules (type_transition, type_change, type_member)
 bool SePolicyImpl::add_type_rule(rust::Str s, rust::Str t, rust::Str c,
                                  rust::Str d, int effect) {
+  std::string src_str(s.data(), s.size());
+  std::string tgt_str(t.data(), t.size());
+  std::string cls_str(c.data(), c.size());
+  std::string def_str(d.data(), d.size());
+
   auto src = hashtab_find<type_datum_t>(db->p_types.table, s);
   auto tgt = hashtab_find<type_datum_t>(db->p_types.table, t);
   auto cls = hashtab_find<class_datum_t>(db->p_classes.table, c);
   auto def = hashtab_find<type_datum_t>(db->p_types.table, d);
-  if (!src || !tgt || !cls || !def)
+  if (!src || !tgt || !cls || !def) {
+    ffi_log_warn("add_type_rule: type/class not found - src=" + src_str +
+                 " tgt=" + tgt_str + " cls=" + cls_str + " def=" + def_str);
     return false;
+  }
 
   avtab_key_t key{};
   key.source_type = src->s.value;
@@ -796,6 +837,8 @@ bool SePolicyImpl::add_type_rule(rust::Str s, rust::Str t, rust::Str c,
   }
   node->datum.data = def->s.value;
 
+  ffi_log_trace("add_type_rule: " + src_str + " " + tgt_str + ":" + cls_str +
+                " -> " + def_str);
   return true;
 }
 

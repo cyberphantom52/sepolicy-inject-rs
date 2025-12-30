@@ -150,7 +150,7 @@ impl SePolicy {
             }
             // Skip unsupported statements
             _ => {
-                warn!("Skipping unsupported statement");
+                warn!(statement = ?stmt, "Skipping unsupported statement");
             }
         }
     }
