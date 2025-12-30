@@ -5,8 +5,6 @@
 #include <sepol/policydb/policydb.h>
 #include <sstream>
 
-#include <cil/cil.h>
-
 static std::string to_string(rust::Str str) {
   return std::string(str.data(), str.size());
 }
@@ -107,7 +105,6 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   char path[128], plat_ver[10];
   FILE *f;
   int policy_ver;
-  const char *cil_file;
 
   CilPolicyImpl cil;
 
@@ -125,56 +122,17 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   fscanf(f, "%s", plat_ver);
   fclose(f);
 
-  // plat
   cil.add_file(SPLIT_PLAT_CIL);
 
-  sprintf(path, PLAT_POLICY_DIR "mapping/%s.cil", plat_ver);
-  if (access(path, R_OK) == 0)
-    cil.add_file(path);
-
-  sprintf(path, PLAT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
-  if (access(path, R_OK) == 0)
-    cil.add_file(path);
-
-  // system_ext
-  sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.cil", plat_ver);
-  if (access(path, R_OK) == 0)
-    cil.add_file(path);
-
-  sprintf(path, SYSEXT_POLICY_DIR "mapping/%s.compat.cil", plat_ver);
-  if (access(path, R_OK) == 0)
-    cil.add_file(path);
-
-  cil_file = SYSEXT_POLICY_DIR "system_ext_sepolicy.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
-
-  // product
-  sprintf(path, PROD_POLICY_DIR "mapping/%s.cil", plat_ver);
-  if (access(path, R_OK) == 0)
-    cil.add_file(path);
-
-  cil_file = PROD_POLICY_DIR "product_sepolicy.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
-
-  // vendor
-  cil_file = VEND_POLICY_DIR "nonplat_sepolicy.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
-
-  cil_file = VEND_POLICY_DIR "plat_pub_versioned.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
-
-  cil_file = VEND_POLICY_DIR "vendor_sepolicy.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
-
-  // odm
-  cil_file = ODM_POLICY_DIR "odm_sepolicy.cil";
-  if (access(cil_file, R_OK) == 0)
-    cil.add_file(cil_file);
+  for (const char *file : CIL_FILES) {
+    const char *actual_file = file;
+    if (strchr(file, '%')) {
+      sprintf(path, file, plat_ver);
+      actual_file = path;
+    }
+    if (access(actual_file, R_OK) == 0)
+      cil.add_file(actual_file);
+  }
 
   return cil.compile();
 }
