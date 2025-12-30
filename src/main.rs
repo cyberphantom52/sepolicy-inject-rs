@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use sepolicy::SePolicy;
+use sepolicy::{log, SePolicy};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use tracing::{error, info};
 
 /// SELinux Policy Injection Tool
 #[derive(Parser)]
@@ -71,6 +72,9 @@ enum RuleType {
 }
 
 fn main() -> ExitCode {
+    // Initialize tracing subscriber
+    log::init_subscriber();
+
     let cli = Cli::parse();
 
     // Determine the source and load the policy
@@ -90,7 +94,7 @@ fn main() -> ExitCode {
 
         #[cfg(not(target_os = "android"))]
         {
-            eprintln!("Error: --load <file> is required on non-Android platforms");
+            error!("--load <file> is required on non-Android platforms");
             return ExitCode::FAILURE;
         }
     };
@@ -98,7 +102,7 @@ fn main() -> ExitCode {
     let mut sepolicy = match sepolicy {
         Some(s) => s,
         None => {
-            eprintln!("Error: Cannot load policy");
+            error!("Cannot load policy");
             return ExitCode::FAILURE;
         }
     };
@@ -122,11 +126,11 @@ fn main() -> ExitCode {
         Some(Commands::Patch { files, macros }) => {
             for te_path in &files {
                 if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
-                    eprintln!("Error applying {}: {}", te_path.display(), e);
+                    error!(path = %te_path.display(), error = %e, "Error applying policy file");
                     return ExitCode::FAILURE;
                 }
             }
-            println!("Successfully patched policy with {} file(s)", files.len());
+            info!(count = files.len(), "Successfully patched policy");
         }
         None => {
             // No command specified, show basic info
