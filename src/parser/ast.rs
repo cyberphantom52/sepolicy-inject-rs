@@ -1,6 +1,6 @@
 //! AST types for SELinux type enforcement (.te) files.
 
-use crate::XPerm;
+use crate::ffi::XPerm;
 use std::collections::HashSet;
 
 /// A set of identifiers with optional complement flag.

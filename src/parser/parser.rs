@@ -5,7 +5,7 @@ use pest_derive::Parser;
 use thiserror::Error;
 
 use super::ast::*;
-use crate::XPerm;
+use crate::ffi::XPerm;
 
 #[derive(Parser)]
 #[grammar = "src/parser/policy.pest"]
