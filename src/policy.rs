@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::ffi::{self, SePolicy};
 use crate::parser::{self, ast::*};
+use tracing::{debug, error, info, warn};
 
 impl SePolicy {
     /// Load policy from a file
@@ -10,37 +11,49 @@ impl SePolicy {
             .as_ref()
             .to_str()
             .expect("path contains invalid UTF-8 characters");
+        info!(path = %path_str, "Loading policy from file");
         let inner = ffi::from_file_impl(path_str);
         if inner.is_null() {
+            error!(path = %path_str, "Failed to load policy from file");
             None
         } else {
+            info!(path = %path_str, "Successfully loaded policy from file");
             Some(SePolicy { inner })
         }
     }
 
     pub fn from_split() -> Option<Self> {
+        info!("Loading policy from split (precompiled)");
         let inner = ffi::from_split_impl();
         if inner.is_null() {
+            error!("Failed to load policy from split");
             None
         } else {
+            info!("Successfully loaded policy from split");
             Some(SePolicy { inner })
         }
     }
 
     pub fn compile_split() -> Option<Self> {
+        info!("Compiling policy from split CIL files");
         let inner = ffi::compile_split_impl();
         if inner.is_null() {
+            error!("Failed to compile policy from split");
             None
         } else {
+            info!("Successfully compiled policy from split");
             Some(SePolicy { inner })
         }
     }
 
     pub fn from_data(data: &[u8]) -> Option<Self> {
+        info!(size = data.len(), "Loading policy from memory");
         let inner = ffi::from_data_impl(data);
         if inner.is_null() {
+            error!(size = data.len(), "Failed to load policy from memory");
             None
         } else {
+            info!(size = data.len(), "Successfully loaded policy from memory");
             Some(SePolicy { inner })
         }
     }
@@ -73,35 +86,50 @@ impl SePolicy {
     {
         use m4rs::processor::{Expander, MacroRegistry};
 
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let path_display = path.as_ref().display().to_string();
+        info!(path = %path_display, "Loading rules from .te file");
+
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+            error!(path = %path_display, error = %e, "Failed to read file");
+            format!("Failed to read file: {}", e)
+        })?;
 
         // Load macro definitions
         let mut registry = MacroRegistry::new();
         for macro_path in macro_paths {
-            registry
-                .load_file(
-                    macro_path
-                        .as_ref()
-                        .to_str()
-                        .ok_or("Macro path contains invalid UTF-8")?,
-                )
-                .map_err(|e| format!("Failed to load macro file: {}", e))?;
+            let macro_path_str = macro_path
+                .as_ref()
+                .to_str()
+                .ok_or("Macro path contains invalid UTF-8")?;
+            debug!(macro_path = %macro_path_str, "Loading macro file");
+            registry.load_file(macro_path_str).map_err(|e| {
+                error!(macro_path = %macro_path_str, error = %e, "Failed to load macro file");
+                format!("Failed to load macro file: {}", e)
+            })?;
         }
 
         // Expand macros
         let mut expander = Expander::new(registry);
-        let expanded = expander
-            .expand(&content)
-            .map_err(|e| format!("M4 expansion failed: {}", e))?;
+        let expanded = expander.expand(&content).map_err(|e| {
+            error!(path = %path_display, error = %e, "M4 expansion failed");
+            format!("M4 expansion failed: {}", e)
+        })?;
 
-        let policy = parser::parse(&expanded).map_err(|e| format!("Parse error: {}", e))?;
+        let policy = parser::parse(&expanded).map_err(|e| {
+            error!(path = %path_display, error = %e, "Parse error");
+            format!("Parse error: {}", e)
+        })?;
         self.apply_policy(&policy);
+        info!(path = %path_display, "Successfully loaded rules from .te file");
         Ok(())
     }
 
     /// Apply a parsed policy to this sepolicy
     pub fn apply_policy(&mut self, policy: &Policy) {
+        debug!(
+            statement_count = policy.statements.len(),
+            "Applying parsed policy"
+        );
         for stmt in &policy.statements {
             self.apply_statement(stmt);
         }
@@ -118,11 +146,11 @@ impl SePolicy {
             Statement::Permissive(p) => self.permissive(&[p.type_name.as_str()]),
             Statement::GenfsContext(g) => self.apply_genfscon(g),
             Statement::Conditional(_) => {
-                todo!()
+                warn!("Conditional statements are not yet supported");
             }
             // Skip unsupported statements
             _ => {
-                // TODO: Warn
+                warn!("Skipping unsupported statement");
             }
         }
     }

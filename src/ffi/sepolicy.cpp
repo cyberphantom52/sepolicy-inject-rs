@@ -9,6 +9,21 @@ static std::string to_string(rust::Str str) {
   return std::string(str.data(), str.size());
 }
 
+// Logging helpers that call into Rust's tracing system
+static constexpr const char *LOG_TARGET = "sepolicy::ffi";
+
+static void ffi_log_info(const std::string &msg) {
+  log_info(LOG_TARGET, msg);
+}
+
+static void ffi_log_error(const std::string &msg) {
+  log_error(LOG_TARGET, msg);
+}
+
+static void ffi_log_debug(const std::string &msg) {
+  log_debug(LOG_TARGET, msg);
+}
+
 SePolicyImpl::~SePolicyImpl() {
   policydb_destroy(db);
   free(db);
@@ -55,26 +70,35 @@ class_datum_t *SePolicyImpl::class_datum(uint32_t v) const {
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
   std::string path = to_string(file);
 
+  ffi_log_debug("Opening policy file: " + path);
+
   policy_file policy_file;
   policy_file_init(&policy_file);
   auto file_opt = open_file(path.c_str(), "r");
-  if (!file_opt)
+  if (!file_opt) {
+    ffi_log_error("Failed to open policy file: " + path);
     return nullptr;
+  }
 
   policy_file.fp = file_opt->get();
   policy_file.type = PF_USE_STDIO;
 
   policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
   if (policydb_init(db) || policydb_read(db, &policy_file, 0)) {
+    ffi_log_error("Failed to read policy database from file: " + path);
     free(db);
     return nullptr;
   }
 
+  ffi_log_info("Successfully loaded policy from file: " + path);
   return std::make_unique<SePolicyImpl>(db);
 }
 
 std::unique_ptr<SePolicyImpl>
 from_data_impl(rust::Slice<const uint8_t> data) noexcept {
+  ffi_log_debug("Loading policy from memory buffer, size: " +
+                std::to_string(data.size()));
+
   policy_file policy_file;
   policy_file_init(&policy_file);
   policy_file.data = (char *)data.data();
@@ -83,22 +107,31 @@ from_data_impl(rust::Slice<const uint8_t> data) noexcept {
 
   policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
   if (policydb_init(db) || policydb_read(db, &policy_file, 0)) {
+    ffi_log_error("Failed to read policy database from memory");
     free(db);
     return nullptr;
   }
 
+  ffi_log_info("Successfully loaded policy from memory");
   return std::make_unique<SePolicyImpl>(db);
 }
 
 std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
   const char *odm_pre = ODM_POLICY_DIR "precompiled_sepolicy";
   const char *vend_pre = VEND_POLICY_DIR "precompiled_sepolicy";
-  if (access(odm_pre, R_OK) == 0 && check_precompiled(odm_pre))
+
+  ffi_log_debug("Checking for precompiled policy");
+
+  if (access(odm_pre, R_OK) == 0 && check_precompiled(odm_pre)) {
+    ffi_log_info(std::string("Using precompiled policy from: ") + odm_pre);
     return from_file_impl(odm_pre);
-  else if (access(vend_pre, R_OK) == 0 && check_precompiled(vend_pre))
+  } else if (access(vend_pre, R_OK) == 0 && check_precompiled(vend_pre)) {
+    ffi_log_info(std::string("Using precompiled policy from: ") + vend_pre);
     return from_file_impl(vend_pre);
-  else
+  } else {
+    ffi_log_info("No valid precompiled policy found, compiling from CIL");
     return compile_split_impl();
+  }
 }
 
 std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
@@ -106,22 +139,31 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   FILE *f;
   int policy_ver;
 
+  ffi_log_info("Compiling split CIL policies");
+
   CilPolicyImpl cil;
 
   f = fopen(SELINUX_VERSION, "re");
-  if (!f)
+  if (!f) {
+    ffi_log_error("Failed to open SELinux version file: " SELINUX_VERSION);
     return nullptr;
+  }
   fscanf(f, "%d", &policy_ver);
   fclose(f);
   cil.set_policy_version(policy_ver);
+  ffi_log_debug("Policy version: " + std::to_string(policy_ver));
 
   // Get mapping version
   f = fopen(VEND_POLICY_DIR "plat_sepolicy_vers.txt", "re");
-  if (!f)
+  if (!f) {
+    ffi_log_error("Failed to open platform sepolicy version file");
     return nullptr;
+  }
   fscanf(f, "%s", plat_ver);
   fclose(f);
+  ffi_log_debug("Platform version: " + std::string(plat_ver));
 
+  ffi_log_debug("Adding base CIL file: " SPLIT_PLAT_CIL);
   cil.add_file(SPLIT_PLAT_CIL);
 
   for (const char *file : CIL_FILES) {
@@ -130,11 +172,20 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
       sprintf(path, file, plat_ver);
       actual_file = path;
     }
-    if (access(actual_file, R_OK) == 0)
+    if (access(actual_file, R_OK) == 0) {
+      ffi_log_debug(std::string("Adding CIL file: ") + actual_file);
       cil.add_file(actual_file);
+    }
   }
 
-  return cil.compile();
+  ffi_log_debug("Compiling CIL database");
+  auto result = cil.compile();
+  if (result) {
+    ffi_log_info("Successfully compiled split CIL policies");
+  } else {
+    ffi_log_error("Failed to compile CIL policies");
+  }
+  return result;
 }
 
 rust::Vec<rust::String> SePolicy::attributes() const noexcept {

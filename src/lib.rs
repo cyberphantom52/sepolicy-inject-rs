@@ -1,11 +1,23 @@
 mod cil;
+pub mod log;
 pub mod parser;
 mod policy;
 
 pub use ffi::{CilPolicy, SePolicy};
 
+// Re-export log functions for FFI bridge
+pub use log::{log_debug, log_error, log_info, log_trace, log_warn};
+
 #[cxx::bridge]
 mod ffi {
+    // Logging FFI - Rust functions callable from C++
+    extern "Rust" {
+        fn log_trace(target: &str, message: &str);
+        fn log_debug(target: &str, message: &str);
+        fn log_info(target: &str, message: &str);
+        fn log_warn(target: &str, message: &str);
+        fn log_error(target: &str, message: &str);
+    }
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct XPerm {
         low: u16,
