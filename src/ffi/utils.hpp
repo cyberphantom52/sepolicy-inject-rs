@@ -154,20 +154,6 @@ static void for_each_rule(rust::Slice<rust::Str const> src,
           fn(s, t, c, x);
 }
 
-
-//
-template <class Func> class run_finally {
-  run_finally(const run_finally &) = delete;
-  run_finally &operator=(const run_finally &) = delete;
-
-public:
-  explicit run_finally(Func &&fn) : fn(std::move(fn)) {}
-  ~run_finally() { fn(); }
-
-private:
-  Func fn;
-};
-
 //
 struct file_deleter {
     void operator()(std::FILE *fp) const noexcept {

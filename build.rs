@@ -6,7 +6,9 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi/sepolicy.cpp");
     println!("cargo:rerun-if-changed=src/ffi/sepolicy.hpp");
     println!("cargo:rerun-if-changed=src/ffi/mmap.hpp");
-    println!("cargo:rerun-if-changed=src/ffi/mmap.hpp");
+    println!("cargo:rerun-if-changed=src/ffi/mmap.cpp");
+    println!("cargo:rerun-if-changed=src/ffi/cil.hpp");
+    println!("cargo:rerun-if-changed=src/ffi/cil.cpp");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let libsepol_dir = manifest_dir.join("selinux").join("libsepol");
@@ -22,6 +24,7 @@ fn main() {
         .include("src/ffi")
         .file("src/ffi/mmap.cpp")
         .file("src/ffi/sepolicy.cpp")
+        .file("src/ffi/cil.cpp")
         .flag("-Wno-unused-parameter")
         .compile("sepolicy_ffi");
 
