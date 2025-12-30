@@ -1,34 +1,44 @@
-use clap::{Parser, Subcommand, ValueEnum};
-use sepolicy::{log, SePolicy};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use sepolicy::{SePolicy, log};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
+
+/// Source of the SELinux policy
+#[derive(Args)]
+#[group(id = "source", required = true, multiple = false)]
+struct SourceArgs {
+    /// Load monolithic sepolicy from a precompiled file
+    #[arg(long)]
+    precompiled: Option<PathBuf>,
+
+    /// Load monolithic sepolicy from a CIL file
+    #[arg(long)]
+    cil: Option<PathBuf>,
+
+    /// Load from live policy (Android only)
+    #[cfg(target_os = "android")]
+    #[arg(long)]
+    live_load: bool,
+
+    /// Load from precompiled sepolicy or compile split cil policies (Android only)
+    #[cfg(target_os = "android")]
+    #[arg(long)]
+    load_split: bool,
+
+    /// Compile split cil policies (Android only)
+    #[cfg(target_os = "android")]
+    #[arg(long)]
+    compile_split: bool,
+}
 
 /// SELinux Policy Injection Tool
 #[derive(Parser)]
 #[command(name = "sepolicy-inject-rs")]
 #[command(author, version, about, long_about = None)]
-#[cfg_attr(
-    target_os = "android",
-    command(
-        after_help = "If neither --load, --load-split, nor --compile-split is specified, it will load from current live policies (/sys/fs/selinux/policy)"
-    )
-)]
 struct Cli {
-    /// Load monolithic sepolicy from a file
-    #[cfg_attr(target_os = "android", arg(long, group = "source", conflicts_with_all = ["load_split", "compile_split"]))]
-    #[cfg_attr(not(target_os = "android"), arg(long))]
-    load: Option<PathBuf>,
-
-    /// Load from precompiled sepolicy or compile split cil policies
-    #[cfg(target_os = "android")]
-    #[arg(long, group = "source", conflicts_with_all = ["load", "compile_split"])]
-    load_split: bool,
-
-    /// Compile split cil policies
-    #[cfg(target_os = "android")]
-    #[arg(long, group = "source", conflicts_with_all = ["load", "load_split"])]
-    compile_split: bool,
+    #[command(flatten)]
+    source: SourceArgs,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -78,24 +88,26 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // Determine the source and load the policy
-    let sepolicy = if let Some(ref file) = cli.load {
-        SePolicy::from_file(file)
+    let sepolicy = if let Some(path) = &cli.source.precompiled {
+        SePolicy::from_file(path)
     } else {
         #[cfg(target_os = "android")]
         {
-            if cli.load_split {
+            if cli.source.live_load {
+                SePolicy::from_file("/sys/fs/selinux/policy")
+            } else if cli.source.load_split {
                 SePolicy::from_split()
-            } else if cli.compile_split {
+            } else if cli.source.compile_split {
                 SePolicy::compile_split()
             } else {
+                // This should never happen due to required group, but handle it gracefully
                 SePolicy::from_file("/sys/fs/selinux/policy")
             }
         }
-
         #[cfg(not(target_os = "android"))]
         {
-            error!("--load <file> is required on non-Android platforms");
-            return ExitCode::FAILURE;
+            // This should never happen due to required group
+            unreachable!("Source group is required")
         }
     };
 
