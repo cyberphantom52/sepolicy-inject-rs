@@ -18,6 +18,13 @@ pest = "2.8.4"
 pest_derive = "2.8.4"
 thiserror = "2.0.17"
 m4rs = { git = "https://github.com/cyberphantom52/m4rs.git", rev = "a55a7141311defcefd4b8e688d743f2ec83e21a9" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-android = { version = "0.2", optional = true }
+
+[features]
+default = []
+android = ["tracing-android"]
 
 [build-dependencies]
 cc = "1.2.49"
