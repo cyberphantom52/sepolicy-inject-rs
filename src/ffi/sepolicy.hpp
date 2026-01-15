@@ -69,6 +69,8 @@ class SePolicyImpl {
   bool set_type_state(rust::Str type_name, bool permissive);
   bool add_typeattribute(rust::Str type, rust::Str attr);
 
+  bool write(rust::Str path);
+
 public:
   explicit SePolicyImpl(policydb *db) : db(db) {}
   ~SePolicyImpl();

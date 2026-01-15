@@ -88,6 +88,8 @@ mod ffi {
         fn transitions(self: &SePolicy) -> Vec<String>;
         fn genfs_contexts(self: &SePolicy) -> Vec<String>;
 
+        fn write(self: &SePolicy, path: &str) -> bool;
+
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
         fn from_split_impl() -> UniquePtr<SePolicyImpl>;
         fn compile_split_impl() -> UniquePtr<SePolicyImpl>;
