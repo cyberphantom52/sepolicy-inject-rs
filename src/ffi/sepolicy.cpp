@@ -3,6 +3,7 @@
 #include <sepol/policydb/ebitmap.h>
 #include <sepol/policydb/policydb.h>
 #include <sstream>
+#include <vector>
 
 static std::string to_string(rust::Str str) {
   return std::string(str.data(), str.size());
@@ -856,7 +857,8 @@ bool SePolicyImpl::add_filename_trans(rust::Str s, rust::Str t, rust::Str c,
   filename_trans_key_t key{};
   key.ttype = tgt->s.value;
   key.tclass = cls->s.value;
-  // We use const_cast because filename_trans_key_t::name is char* not const char*, but we're only using it for the lookup.
+  // We use const_cast because filename_trans_key_t::name is char* not const
+  // char*, but we're only using it for the lookup.
   key.name = const_cast<char *>(obj_name.c_str());
 
   auto trans = static_cast<filename_trans_datum_t *>(
@@ -923,6 +925,7 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   auto fs = list_find(db->genfs, [&](genfs_t *n) {
     return str_eq(n->fstype, fs_name);
   });
+
   if (!fs) {
     fs = static_cast<genfs_t *>(calloc(1, sizeof(genfs_t)));
     fs->fstype = dup_str(fs_name);
@@ -933,6 +936,7 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   auto o_ctx = list_find(fs->head, [&](ocontext_t *n) {
     return str_eq(n->u.name, path);
   });
+
   if (!o_ctx) {
     o_ctx = static_cast<ocontext_t *>(calloc(1, sizeof(ocontext_t)));
     o_ctx->u.name = dup_str(path);
@@ -950,4 +954,60 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
 void SePolicy::genfscon(rust::Str fs, rust::Str path,
                         rust::Str context) noexcept {
   inner->add_genfscon(fs, path, context);
+}
+
+bool SePolicyImpl::write(rust::Str path) {
+  std::string path_str(path.data(), path.size());
+
+  // Write policy to memory buffer first
+  // This is required because /sys/fs/selinux/load doesn't allow partial writes
+  char *buf = nullptr;
+  size_t buf_size = 0;
+
+  FILE *fp = open_memstream(&buf, &buf_size);
+  if (!fp) {
+    ffi_log_error("write: failed to create memory buffer");
+    return false;
+  }
+
+  policy_file_t pf;
+  policy_file_init(&pf);
+  pf.type = PF_USE_STDIO;
+  pf.fp = fp;
+
+  int write_result = policydb_write(this->db, &pf);
+  fclose(fp);
+
+  if (write_result != 0) {
+    ffi_log_error("write: failed to serialize policy");
+    free(buf);
+    return false;
+  }
+
+  ffi_log_debug("write: serialized policy (" + std::to_string(buf_size) + " bytes)");
+
+  // Open file with O_TRUNC to handle existing content
+  int fd = open(path_str.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    ffi_log_error("write: failed to open " + path_str + ": " + strerror(errno));
+    free(buf);
+    return false;
+  }
+
+  // Write in one operation (required for /sys/fs/selinux/load)
+  ssize_t written = ::write(fd, buf, buf_size);
+  close(fd);
+  free(buf);
+
+  if (written < 0 || static_cast<size_t>(written) != buf_size) {
+    ffi_log_error("write: failed to write policy to " + path_str);
+    return false;
+  }
+
+  ffi_log_info("write: successfully wrote policy to " + path_str);
+  return true;
+}
+
+bool SePolicy::write(::rust::Str path) const noexcept {
+    return inner->write(path);
 }

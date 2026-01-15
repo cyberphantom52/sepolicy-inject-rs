@@ -62,6 +62,15 @@ enum Commands {
         /// M4 macro definition file (can be specified multiple times)
         #[arg(long = "macro", short = 'm', value_name = "FILE")]
         macros: Vec<PathBuf>,
+
+        /// Save patched policy to file
+        #[arg(long, short = 'o', value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Load patched policy directly into kernel
+        #[cfg(target_os = "android")]
+        #[arg(long)]
+        live_patch: bool,
     },
 }
 
@@ -135,7 +144,13 @@ fn main() -> ExitCode {
                 println!("{}", rule);
             }
         }
-        Some(Commands::Patch { files, macros }) => {
+        Some(Commands::Patch {
+            files,
+            macros,
+            output,
+            #[cfg(target_os = "android")]
+            live_patch,
+        }) => {
             for te_path in &files {
                 if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
                     error!(path = %te_path.display(), error = %e, "Error applying policy file");
@@ -143,6 +158,26 @@ fn main() -> ExitCode {
                 }
             }
             info!(count = files.len(), "Successfully patched policy");
+
+            // Save to output file if specified
+            if let Some(out_path) = output {
+                let path_str = out_path.to_string_lossy();
+                if !sepolicy.write(&path_str) {
+                    error!(path = %path_str, "Failed to write policy to file");
+                    return ExitCode::FAILURE;
+                }
+                info!(path = %path_str, "Wrote patched policy to file");
+            }
+
+            // Live patch on Android
+            #[cfg(target_os = "android")]
+            if live_patch {
+                if !sepolicy.write("/sys/fs/selinux/load") {
+                    error!("Failed to load policy into kernel");
+                    return ExitCode::FAILURE;
+                }
+                info!("Successfully loaded patched policy into kernel");
+            }
         }
         None => {
             // No command specified, show basic info
