@@ -7,6 +7,7 @@ A Rust library and CLI tool for injecting SELinux policy rules into compiled pol
 - **Load compiled policies**: Support for monolithic policy files and Android split policies
 - **Parse and apply `.te` files**: Parse Type Enforcement files and inject rules into loaded policies
 - **M4 macro expansion**: Built-in support for M4 macro preprocessing (required for many SELinux policy files)
+- **Live patching**: Load patched policies directly into the running kernel (Android)
 - **CLI and library**: Use as a command-line tool or embed in your Rust projects
 - **Android support**: Special support for Android's split policy system
 
@@ -90,26 +91,25 @@ sepolicy-inject-rs --load /path/to/policy print genfs
 
 ```bash
 # Apply a single .te file
-sepolicy-inject-rs --load /path/to/policy patch rules.te
+sepolicy-inject-rs --precompiled /path/to/policy patch rules.te
 
 # Apply multiple .te files
-sepolicy-inject-rs --load /path/to/policy patch rules1.te rules2.te
+sepolicy-inject-rs --precompiled /path/to/policy patch rules1.te rules2.te
 
 # Apply with M4 macro definitions
-sepolicy-inject-rs --load /path/to/policy patch rules.te -m global_macros.m4 -m te_macros.m4
+sepolicy-inject-rs --precompiled /path/to/policy patch rules.te -m global_macros.m4 -m te_macros.m4
 
-# Apply multiple files with macros
-sepolicy-inject-rs --load /path/to/policy patch *.te -m macros.m4
+# Save patched policy to a file
+sepolicy-inject-rs --precompiled /path/to/policy patch rules.te --output /path/to/patched_policy
 ```
 
 #### Android-Specific Usage
 
-On Android devices or when building for Android, the tool automatically loads from the live policy (`/sys/fs/selinux/policy`) if no source option is specified:
+On Android devices, additional options are available:
 
 ```bash
-# Load from live policy (default - no options needed)
-sepolicy-inject-rs print
-sepolicy-inject-rs patch rules.te -m te_macros.m4
+# Load from live policy from `/sys/fs/selinux/policy` and print
+sepolicy-inject-rs --live-load print
 
 # Load from precompiled split policy
 sepolicy-inject-rs --load-split print
@@ -117,9 +117,14 @@ sepolicy-inject-rs --load-split print
 # Compile split CIL policies
 sepolicy-inject-rs --compile-split print
 
-# Explicitly load from a file (overrides default)
-sepolicy-inject-rs --load /path/to/policy.bin print
+# Patch and save to file
+sepolicy-inject-rs --live-load patch rules.te -m te_macros.m4 --output /data/local/tmp/patched
+
+# Patch and load directly into kernel
+sepolicy-inject-rs --live-load patch rules.te --live-patch
 ```
+
+> **Note**: `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
 
 ### Library Usage
 
