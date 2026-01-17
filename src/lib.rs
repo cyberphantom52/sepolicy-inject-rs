@@ -107,6 +107,9 @@ mod ffi {
         type CilPolicyImpl;
 
         fn add_file(self: Pin<&mut CilPolicyImpl>, path: &str) -> bool;
+        fn add_rule(self: Pin<&mut CilPolicyImpl>, name: &str, data: &str) -> bool;
+        fn compile(self: Pin<&mut CilPolicyImpl>) -> bool;
+        fn write(self: &CilPolicy, path: &str) -> bool;
 
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }

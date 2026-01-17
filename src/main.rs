@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sepolicy::{SePolicy, log};
+use sepolicy::{CilPolicy, SePolicy, log};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
@@ -30,6 +30,33 @@ struct SourceArgs {
     #[cfg(target_os = "android")]
     #[arg(long)]
     compile_split: bool,
+}
+
+/// Output format for patched policy
+#[derive(Clone, ValueEnum, Default)]
+enum OutputFormat {
+    /// Binary policy file
+    #[default]
+    Binary,
+    /// CIL text file
+    Cil,
+}
+
+/// Output destination for patched policy
+#[derive(Args)]
+struct OutputArgs {
+    /// Output file path
+    #[arg(long, short = 'o', value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Output format (required when --output is specified)
+    #[arg(long, value_enum, default_value_t = OutputFormat::Binary)]
+    format: OutputFormat,
+
+    /// Load patched policy directly into kernel (Android only)
+    #[cfg(target_os = "android")]
+    #[arg(long, conflicts_with_all = ["output", "format"])]
+    live_patch: bool,
 }
 
 /// SELinux Policy Injection Tool
@@ -63,14 +90,8 @@ enum Commands {
         #[arg(long = "macro", short = 'm', value_name = "FILE")]
         macros: Vec<PathBuf>,
 
-        /// Save patched policy to file
-        #[arg(long, short = 'o', value_name = "FILE")]
-        output: Option<PathBuf>,
-
-        /// Load patched policy directly into kernel
-        #[cfg(target_os = "android")]
-        #[arg(long)]
-        live_patch: bool,
+        #[command(flatten)]
+        output_args: OutputArgs,
     },
 }
 
@@ -96,7 +117,12 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
 
-    // Determine the source and load the policy
+    // Check if CIL source is used
+    if let Some(cil_path) = &cli.source.cil {
+        return handle_cil_source(cil_path, &cli);
+    }
+
+    // Handle binary policy source
     let sepolicy = if let Some(path) = &cli.source.precompiled {
         SePolicy::from_file(path)
     } else {
@@ -109,13 +135,11 @@ fn main() -> ExitCode {
             } else if cli.source.compile_split {
                 SePolicy::compile_split()
             } else {
-                // This should never happen due to required group, but handle it gracefully
                 SePolicy::from_file("/sys/fs/selinux/policy")
             }
         }
         #[cfg(not(target_os = "android"))]
         {
-            // This should never happen due to required group
             unreachable!("Source group is required")
         }
     };
@@ -128,7 +152,7 @@ fn main() -> ExitCode {
         }
     };
 
-    // Handle commands
+    // Handle commands for binary policy
     match cli.command {
         Some(Commands::Print { rule_type }) => {
             let rules = match rule_type {
@@ -147,9 +171,7 @@ fn main() -> ExitCode {
         Some(Commands::Patch {
             files,
             macros,
-            output,
-            #[cfg(target_os = "android")]
-            live_patch,
+            output_args,
         }) => {
             for te_path in &files {
                 if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
@@ -160,18 +182,26 @@ fn main() -> ExitCode {
             info!(count = files.len(), "Successfully patched policy");
 
             // Save to output file if specified
-            if let Some(out_path) = output {
+            if let Some(out_path) = output_args.output {
                 let path_str = out_path.to_string_lossy();
-                if !sepolicy.write(&path_str) {
-                    error!(path = %path_str, "Failed to write policy to file");
-                    return ExitCode::FAILURE;
+                match output_args.format {
+                    OutputFormat::Binary => {
+                        if !sepolicy.write(&path_str) {
+                            error!(path = %path_str, "Failed to write policy to file");
+                            return ExitCode::FAILURE;
+                        }
+                        info!(path = %path_str, "Wrote patched binary policy to file");
+                    }
+                    OutputFormat::Cil => {
+                        error!("CIL output is only supported when loading from --cil source");
+                        return ExitCode::FAILURE;
+                    }
                 }
-                info!(path = %path_str, "Wrote patched policy to file");
             }
 
             // Live patch on Android
             #[cfg(target_os = "android")]
-            if live_patch {
+            if output_args.live_patch {
                 if !sepolicy.write("/sys/fs/selinux/load") {
                     error!("Failed to load policy into kernel");
                     return ExitCode::FAILURE;
@@ -180,24 +210,94 @@ fn main() -> ExitCode {
             }
         }
         None => {
-            // No command specified, show basic info
-            let attrs = sepolicy.attributes();
-            let types = sepolicy.types();
-            let avtabs = sepolicy.avtabs();
-            let transitions = sepolicy.transitions();
-            let genfs = sepolicy.genfs_contexts();
-
-            println!("Policy loaded successfully!");
-            println!("  Attributes:     {}", attrs.len());
-            println!("  Types:          {}", types.len());
-            println!("  AV Rules:       {}", avtabs.len());
-            println!("  Transitions:    {}", transitions.len());
-            println!("  Genfs Contexts: {}", genfs.len());
-            println!();
-            println!("Use 'print' subcommand to display rules.");
-            println!("Use 'patch' subcommand to apply .te files.");
+            print_policy_info(&sepolicy);
         }
     }
 
     ExitCode::SUCCESS
+}
+
+/// Handle CIL source input
+fn handle_cil_source(cil_path: &PathBuf, cli: &Cli) -> ExitCode {
+    let mut cil_policy = match CilPolicy::from_file(cil_path) {
+        Some(p) => p,
+        None => {
+            error!("Cannot load CIL policy");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match &cli.command {
+        Some(Commands::Print { .. }) => {
+            error!("Print command is not supported for CIL source. Use --precompiled instead.");
+            return ExitCode::FAILURE;
+        }
+        Some(Commands::Patch {
+            files,
+            macros,
+            output_args,
+        }) => {
+            // Patch CIL with TE files
+            for te_path in files {
+                if let Err(e) = cil_policy.load_rules_from_file(te_path, macros) {
+                    error!(path = %te_path.display(), error = %e, "Error applying policy file");
+                    return ExitCode::FAILURE;
+                }
+            }
+            info!(count = files.len(), "Successfully patched CIL policy");
+
+            // Write output
+            if let Some(out_path) = &output_args.output {
+                let path_str = out_path.to_string_lossy();
+                match output_args.format {
+                    OutputFormat::Cil => {
+                        // For CIL output, write directly without compilation
+                        if !cil_policy.write(&path_str) {
+                            error!(path = %path_str, "Failed to write CIL to file");
+                            return ExitCode::FAILURE;
+                        }
+                        info!(path = %path_str, "Wrote patched CIL policy to file");
+                    }
+                    OutputFormat::Binary => {
+                        // Binary output requires compilation first
+                        if !cil_policy.compile() {
+                            error!("Failed to compile CIL policy");
+                            return ExitCode::FAILURE;
+                        }
+                        error!("Binary output from CIL source is not yet supported");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+
+            #[cfg(target_os = "android")]
+            if output_args.live_patch {
+                error!("Live patch is not supported for CIL source");
+                return ExitCode::FAILURE;
+            }
+        }
+        None => {
+            info!("CIL policy loaded successfully. Use 'patch' subcommand to apply .te files.");
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn print_policy_info(sepolicy: &SePolicy) {
+    let attrs = sepolicy.attributes();
+    let types = sepolicy.types();
+    let avtabs = sepolicy.avtabs();
+    let transitions = sepolicy.transitions();
+    let genfs = sepolicy.genfs_contexts();
+
+    println!("Policy loaded successfully!");
+    println!("  Attributes:     {}", attrs.len());
+    println!("  Types:          {}", types.len());
+    println!("  AV Rules:       {}", avtabs.len());
+    println!("  Transitions:    {}", transitions.len());
+    println!("  Genfs Contexts: {}", genfs.len());
+    println!();
+    println!("Use 'print' subcommand to display rules.");
+    println!("Use 'patch' subcommand to apply .te files.");
 }
