@@ -59,7 +59,7 @@ inline bool check_precompiled(const char *precompiled) {
     actual_sha = PLAT_POLICY_DIR "plat_and_mapping_sepolicy.cil.sha256";
     if (access(actual_sha, R_OK) == 0) {
         ok = true;
-        sprintf(compiled_sha, "%s.plat_and_mapping.sha256", precompiled);
+        snprintf(compiled_sha, sizeof(compiled_sha), "%s.plat_and_mapping.sha256", precompiled);
         if (!cmp_sha256(actual_sha, compiled_sha))
         return false;
     }
@@ -67,7 +67,7 @@ inline bool check_precompiled(const char *precompiled) {
     actual_sha = PLAT_POLICY_DIR "plat_sepolicy_and_mapping.sha256";
     if (access(actual_sha, R_OK) == 0) {
         ok = true;
-        sprintf(compiled_sha, "%s.plat_sepolicy_and_mapping.sha256", precompiled);
+        snprintf(compiled_sha, sizeof(compiled_sha), "%s.plat_sepolicy_and_mapping.sha256", precompiled);
         if (!cmp_sha256(actual_sha, compiled_sha))
         return false;
     }
@@ -75,7 +75,7 @@ inline bool check_precompiled(const char *precompiled) {
     actual_sha = PROD_POLICY_DIR "product_sepolicy_and_mapping.sha256";
     if (access(actual_sha, R_OK) == 0) {
         ok = true;
-        sprintf(compiled_sha, "%s.product_sepolicy_and_mapping.sha256", precompiled);
+        snprintf(compiled_sha, sizeof(compiled_sha), "%s.product_sepolicy_and_mapping.sha256", precompiled);
         if (!cmp_sha256(actual_sha, compiled_sha))
         return false;
     }
@@ -83,7 +83,7 @@ inline bool check_precompiled(const char *precompiled) {
     actual_sha = SYSEXT_POLICY_DIR "system_ext_sepolicy_and_mapping.sha256";
     if (access(actual_sha, R_OK) == 0) {
         ok = true;
-        sprintf(compiled_sha, "%s.system_ext_sepolicy_and_mapping.sha256", precompiled);
+        snprintf(compiled_sha, sizeof(compiled_sha), "%s.system_ext_sepolicy_and_mapping.sha256", precompiled);
         if (!cmp_sha256(actual_sha, compiled_sha))
         return false;
     }

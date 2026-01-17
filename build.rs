@@ -57,8 +57,7 @@ fn build_libsepol() {
         .include(&libsepol_dir.join("cil").join("include"))
         .include(&libsepol_dir.join("src"))
         .include(&libsepol_dir.join("cil").join("src"))
-        .flag("-Wno-unused-but-set-variable")
-        .flag("-Wno-deprecated-declarations");
+        .flag("-Wno-unused-but-set-variable");
 
     // Determine if we should define HAVE_REALLOCARRAY
     // - macOS: does NOT have reallocarray, use libsepol's fallback
