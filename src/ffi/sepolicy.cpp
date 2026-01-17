@@ -201,7 +201,7 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   }
 
   ffi_log_debug("Compiling CIL database");
-  auto result = cil.compile();
+  auto result = cil.build();
   if (result) {
     ffi_log_info("Successfully compiled split CIL policies");
   } else {

@@ -32,10 +32,15 @@ fn main() {
     println!("cargo:rustc-link-lib=static=libsepol");
     println!("cargo:rustc-link-lib=static=sepolicy_ffi");
 
-    // Android NDK uses libc++ (c++), not libstdc++ (stdc++)
+    // Link C++ standard library:
+    // - Android NDK uses libc++ (c++_static)
+    // - macOS uses libc++ (c++)
+    // - Linux uses libstdc++ (stdc++)
     let target = std::env::var("TARGET").unwrap_or_default();
     if target.contains("android") {
         println!("cargo:rustc-link-lib=c++_static");
+    } else if target.contains("apple") {
+        println!("cargo:rustc-link-lib=c++");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
     }
@@ -52,17 +57,28 @@ fn build_libsepol() {
         .include(&libsepol_dir.join("cil").join("include"))
         .include(&libsepol_dir.join("src"))
         .include(&libsepol_dir.join("cil").join("src"))
-        .flag("-Wno-unused-but-set-variable");
+        .flag("-Wno-unused-but-set-variable")
+        .flag("-Wno-deprecated-declarations");
 
     // Determine if we should define HAVE_REALLOCARRAY
-    // - Non-Android: glibc/musl typically have it
+    // - macOS: does NOT have reallocarray, use libsepol's fallback
+    // - Linux (glibc): has reallocarray
     // - Android API 29+: Bionic provides reallocarray
     // - Android API < 29: Bionic does NOT have reallocarray, use libsepol's fallback
+    let target = std::env::var("TARGET").unwrap_or_default();
     let android_api = std::env::var("ANDROID_PLATFORM")
         .ok()
         .and_then(|s| s.parse::<u32>().ok());
 
-    if android_api.is_none() || android_api.unwrap() >= 29 {
+    let has_reallocarray = if target.contains("apple") {
+        false
+    } else if target.contains("android") {
+        android_api.unwrap_or(0) >= 29
+    } else {
+        true
+    };
+
+    if has_reallocarray {
         libsepol_build.define("HAVE_REALLOCARRAY", None);
     }
 
