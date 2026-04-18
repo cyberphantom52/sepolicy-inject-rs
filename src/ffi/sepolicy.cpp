@@ -47,8 +47,15 @@ static void ffi_log_error(const std::string &msg) {
 }
 
 SePolicyImpl::~SePolicyImpl() {
-  policydb_destroy(db);
-  free(db);
+  if (db_owner != nullptr) {
+    sepol_policydb_free(db_owner);
+    db_owner = nullptr;
+    db = nullptr;
+  } else if (db != nullptr) {
+    policydb_destroy(db);
+    free(db);
+    db = nullptr;
+  }
 }
 
 std::optional<std::string> SePolicyImpl::type_name(uint32_t v) const {

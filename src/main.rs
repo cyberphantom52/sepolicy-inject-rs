@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sepolicy::{SePolicy, log};
+use sepolicy::{CilPolicy, SePolicy, log};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
@@ -12,7 +12,7 @@ struct SourceArgs {
     #[arg(long)]
     precompiled: Option<PathBuf>,
 
-    /// Load monolithic sepolicy from a CIL file
+    /// Load monolithic sepolicy from a CIL file (compiled internally)
     #[arg(long)]
     cil: Option<PathBuf>,
 
@@ -21,12 +21,12 @@ struct SourceArgs {
     #[arg(long)]
     live_load: bool,
 
-    /// Load from precompiled sepolicy or compile split cil policies (Android only)
+    /// Load from precompiled split policy or compile split CIL policies (Android only)
     #[cfg(target_os = "android")]
     #[arg(long)]
     load_split: bool,
 
-    /// Compile split cil policies (Android only)
+    /// Compile split CIL policies (Android only)
     #[cfg(target_os = "android")]
     #[arg(long)]
     compile_split: bool,
@@ -72,6 +72,15 @@ enum Commands {
         #[arg(long)]
         live_patch: bool,
     },
+
+    /// Extract all CIL AST statements related to a label
+    ///
+    /// This subcommand requires `--cil`.
+    Extract {
+        /// SELinux label/type to extract from the input CIL
+        #[arg(value_name = "LABEL")]
+        label: String,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -90,40 +99,99 @@ enum RuleType {
     Genfs,
 }
 
+fn load_policy_from_source(source: &SourceArgs) -> Result<SePolicy, String> {
+    if let Some(path) = &source.precompiled {
+        return SePolicy::from_file(path)
+            .ok_or_else(|| format!("failed to load precompiled policy: {}", path.display()));
+    }
+
+    if let Some(path) = &source.cil {
+        info!(path = %path.display(), "Compiling policy from CIL file");
+        return CilPolicy::compile_file(path)
+            .map_err(|e| format!("failed to compile CIL file {}: {}", path.display(), e));
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        if source.live_load {
+            SePolicy::from_file("/sys/fs/selinux/policy")
+                .ok_or_else(|| "failed to load live policy".to_string())
+        } else if source.load_split {
+            SePolicy::from_split().ok_or_else(|| "failed to load split policy".to_string())
+        } else if source.compile_split {
+            SePolicy::compile_split().ok_or_else(|| "failed to compile split policy".to_string())
+        } else {
+            Err("no policy source selected".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("no policy source selected".to_string())
+    }
+}
+
+fn extract_from_cil_source(source: &SourceArgs, label: &str) -> Result<Vec<String>, String> {
+    let path = source
+        .cil
+        .as_ref()
+        .ok_or_else(|| "the 'extract' subcommand requires '--cil <FILE>'".to_string())?;
+
+    info!(
+        path = %path.display(),
+        label = %label,
+        "Extracting CIL statements for label"
+    );
+
+    CilPolicy::extract_label_from_file(path, label).map_err(|e| {
+        format!(
+            "failed to extract label '{}' from CIL file {}: {}",
+            label,
+            path.display(),
+            e
+        )
+    })
+}
+
+fn print_cil_matches(matches: &[String]) {
+    for (index, entry) in matches.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        println!("{entry}");
+    }
+}
+
 fn main() -> ExitCode {
     // Initialize tracing subscriber
     log::init_subscriber();
 
     let cli = Cli::parse();
 
-    // Determine the source and load the policy
-    let sepolicy = if let Some(path) = &cli.source.precompiled {
-        SePolicy::from_file(path)
-    } else {
-        #[cfg(target_os = "android")]
-        {
-            if cli.source.live_load {
-                SePolicy::from_file("/sys/fs/selinux/policy")
-            } else if cli.source.load_split {
-                SePolicy::from_split()
-            } else if cli.source.compile_split {
-                SePolicy::compile_split()
-            } else {
-                // This should never happen due to required group, but handle it gracefully
-                SePolicy::from_file("/sys/fs/selinux/policy")
+    // Handle extraction directly from CIL without compiling to policydb first.
+    if let Some(Commands::Extract { label }) = &cli.command {
+        let matches = match extract_from_cil_source(&cli.source, label) {
+            Ok(matches) => matches,
+            Err(e) => {
+                error!(error = %e, "Failed to extract label from CIL source");
+                return ExitCode::FAILURE;
             }
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            // This should never happen due to required group
-            unreachable!("Source group is required")
-        }
-    };
+        };
 
-    let mut sepolicy = match sepolicy {
-        Some(s) => s,
-        None => {
-            error!("Cannot load policy");
+        if matches.is_empty() {
+            println!("No matching CIL statements found for '{}'.", label);
+        } else {
+            print_cil_matches(&matches);
+        }
+
+        return ExitCode::SUCCESS;
+    }
+
+    // Determine the source and load the policy
+    let mut sepolicy = match load_policy_from_source(&cli.source) {
+        Ok(policy) => policy,
+        Err(e) => {
+            error!(error = %e, "Cannot load policy");
             return ExitCode::FAILURE;
         }
     };
@@ -141,7 +209,7 @@ fn main() -> ExitCode {
             };
 
             for rule in rules {
-                println!("{}", rule);
+                println!("{rule}");
             }
         }
         Some(Commands::Patch {
@@ -179,6 +247,9 @@ fn main() -> ExitCode {
                 info!("Successfully loaded patched policy into kernel");
             }
         }
+        Some(Commands::Extract { .. }) => {
+            unreachable!("extract is handled before loading the compiled policy")
+        }
         None => {
             // No command specified, show basic info
             let attrs = sepolicy.attributes();
@@ -196,6 +267,7 @@ fn main() -> ExitCode {
             println!();
             println!("Use 'print' subcommand to display rules.");
             println!("Use 'patch' subcommand to apply .te files.");
+            println!("Use 'extract <label>' with '--cil <FILE>' to query CIL statements.");
         }
     }
 

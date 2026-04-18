@@ -4,6 +4,7 @@
 #include <optional>
 #include <rust/cxx.h>
 
+#include <sepol/policydb.h>
 #include <sepol/policydb/policydb.h>
 #include <string>
 #include <unordered_map>
@@ -40,6 +41,7 @@ struct XPerm;
 
 class SePolicyImpl {
   policydb *db;
+  sepol_policydb_t *db_owner;
   mutable std::unordered_map<uint32_t, std::vector<const char *>>
       class_perm_cache;
   friend struct SePolicy;
@@ -72,7 +74,9 @@ class SePolicyImpl {
   bool write(rust::Str path);
 
 public:
-  explicit SePolicyImpl(policydb *db) : db(db) {}
+  explicit SePolicyImpl(policydb *db) : db(db), db_owner(nullptr) {}
+  explicit SePolicyImpl(sepol_policydb_t *db_owner)
+      : db(db_owner ? &db_owner->p : nullptr), db_owner(db_owner) {}
   ~SePolicyImpl();
 };
 
