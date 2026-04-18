@@ -107,6 +107,8 @@ mod ffi {
         type CilPolicyImpl;
 
         fn add_file(self: Pin<&mut CilPolicyImpl>, path: &str) -> bool;
+        fn compile(self: Pin<&mut CilPolicyImpl>) -> UniquePtr<SePolicyImpl>;
+        fn extract_label(self: Pin<&mut CilPolicyImpl>, label: &str) -> Vec<String>;
 
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }

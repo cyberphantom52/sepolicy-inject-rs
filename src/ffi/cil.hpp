@@ -19,6 +19,7 @@ public:
   bool add_file(const char *path) noexcept;
   void set_policy_version(int version) noexcept;
   std::unique_ptr<SePolicyImpl> compile() noexcept;
+  rust::Vec<rust::String> extract_label(rust::Str label) noexcept;
 };
 
 std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept;
