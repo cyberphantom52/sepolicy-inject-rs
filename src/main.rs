@@ -73,13 +73,13 @@ enum Commands {
         live_patch: bool,
     },
 
-    /// Extract all CIL AST statements related to a label
+    /// Extract all CIL AST statements related to one or more labels
     ///
     /// This subcommand requires `--cil`.
     Extract {
-        /// SELinux label/type to extract from the input CIL
-        #[arg(value_name = "LABEL")]
-        label: String,
+        /// SELinux label/type(s) to extract from the input CIL
+        #[arg(required = true, value_name = "LABEL")]
+        labels: Vec<String>,
     },
 }
 
@@ -131,7 +131,10 @@ fn load_policy_from_source(source: &SourceArgs) -> Result<SePolicy, String> {
     }
 }
 
-fn extract_from_cil_source(source: &SourceArgs, label: &str) -> Result<Vec<String>, String> {
+fn extract_from_cil_source(
+    source: &SourceArgs,
+    labels: &[String],
+) -> Result<Vec<(String, Vec<String>)>, String> {
     let path = source
         .cil
         .as_ref()
@@ -139,18 +142,37 @@ fn extract_from_cil_source(source: &SourceArgs, label: &str) -> Result<Vec<Strin
 
     info!(
         path = %path.display(),
-        label = %label,
-        "Extracting CIL statements for label"
+        count = labels.len(),
+        "Extracting CIL statements for labels"
     );
 
-    CilPolicy::extract_label_from_file(path, label).map_err(|e| {
-        format!(
-            "failed to extract label '{}' from CIL file {}: {}",
-            label,
-            path.display(),
-            e
-        )
-    })
+    let mut policy = CilPolicy::from_file(path)
+        .map_err(|e| format!("failed to load CIL file {}: {}", path.display(), e))?;
+
+    let mut results = Vec::with_capacity(labels.len());
+
+    for label in labels {
+        let trimmed = label.trim();
+
+        info!(
+            path = %path.display(),
+            label = %trimmed,
+            "Extracting CIL statements for label"
+        );
+
+        let matches = policy.extract_label(trimmed).map_err(|e| {
+            format!(
+                "failed to extract label '{}' from CIL file {}: {}",
+                trimmed,
+                path.display(),
+                e
+            )
+        })?;
+
+        results.push((trimmed.to_string(), matches));
+    }
+
+    Ok(results)
 }
 
 fn print_cil_matches(matches: &[String]) {
@@ -162,6 +184,27 @@ fn print_cil_matches(matches: &[String]) {
     }
 }
 
+fn print_cil_results(results: &[(String, Vec<String>)]) {
+    let show_headers = results.len() > 1;
+
+    for (index, (label, matches)) in results.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+
+        if show_headers {
+            println!("== {label} ==");
+            println!();
+        }
+
+        if matches.is_empty() {
+            println!("No matching CIL statements found for '{}'.", label);
+        } else {
+            print_cil_matches(matches);
+        }
+    }
+}
+
 fn main() -> ExitCode {
     // Initialize tracing subscriber
     log::init_subscriber();
@@ -169,21 +212,16 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // Handle extraction directly from CIL without compiling to policydb first.
-    if let Some(Commands::Extract { label }) = &cli.command {
-        let matches = match extract_from_cil_source(&cli.source, label) {
-            Ok(matches) => matches,
+    if let Some(Commands::Extract { labels }) = &cli.command {
+        let results = match extract_from_cil_source(&cli.source, labels) {
+            Ok(results) => results,
             Err(e) => {
-                error!(error = %e, "Failed to extract label from CIL source");
+                error!(error = %e, "Failed to extract labels from CIL source");
                 return ExitCode::FAILURE;
             }
         };
 
-        if matches.is_empty() {
-            println!("No matching CIL statements found for '{}'.", label);
-        } else {
-            print_cil_matches(&matches);
-        }
-
+        print_cil_results(&results);
         return ExitCode::SUCCESS;
     }
 
@@ -267,7 +305,9 @@ fn main() -> ExitCode {
             println!();
             println!("Use 'print' subcommand to display rules.");
             println!("Use 'patch' subcommand to apply .te files.");
-            println!("Use 'extract <label>' with '--cil <FILE>' to query CIL statements.");
+            println!(
+                "Use 'extract <label> [label ...]' with '--cil <FILE>' to query CIL statements."
+            );
         }
     }
 
