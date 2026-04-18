@@ -225,6 +225,129 @@ static bool contains_label_token(std::string_view text,
 
 
 
+static std::string_view cstr_view(const char *value) noexcept {
+  return value != nullptr ? std::string_view(value) : std::string_view();
+}
+
+static const char *datum_name(const struct cil_symtab_datum *datum) noexcept {
+  if (datum == nullptr) {
+    return nullptr;
+  }
+
+  if (datum->fqn != nullptr && *datum->fqn != '\0') {
+    return datum->fqn;
+  }
+
+  if (datum->name != nullptr && *datum->name != '\0') {
+    return datum->name;
+  }
+
+  return nullptr;
+}
+
+static const char *
+typeattributeset_name(const struct cil_typeattributeset *attrset) noexcept {
+  if (attrset == nullptr) {
+    return nullptr;
+  }
+
+  if (attrset->attr != nullptr) {
+    const char *name = datum_name(DATUM(attrset->attr));
+    if (name != nullptr) {
+      return name;
+    }
+  }
+
+  return attrset->attr_str;
+}
+
+static const char *typeattributeset_member_name(
+    const struct cil_list_item *item) noexcept {
+  if (item == nullptr || item->data == nullptr) {
+    return nullptr;
+  }
+
+  switch (item->flavor) {
+  case CIL_STRING:
+    return static_cast<const char *>(item->data);
+  case CIL_DATUM:
+  case CIL_TYPE:
+  case CIL_TYPEATTRIBUTE:
+  case CIL_TYPEALIAS:
+    return datum_name(DATUM(item->data));
+  default:
+    return nullptr;
+  }
+}
+
+struct TypeAttributeSetMembershipInfo {
+  const char *attribute_name;
+  bool matches_attribute_name;
+  bool contains_label_member;
+  bool simple_member_list;
+};
+
+static TypeAttributeSetMembershipInfo inspect_typeattributeset_membership(
+    const struct cil_typeattributeset *attrset,
+    std::string_view label) noexcept {
+  TypeAttributeSetMembershipInfo info{typeattributeset_name(attrset), false,
+                                      false, true};
+
+  info.matches_attribute_name = cstr_view(info.attribute_name) == label;
+
+  if (attrset == nullptr) {
+    return info;
+  }
+
+  const struct cil_list *expr =
+      attrset->str_expr != nullptr ? attrset->str_expr : attrset->datum_expr;
+  if (expr == nullptr) {
+    return info;
+  }
+
+  for (struct cil_list_item *item = expr->head; item != nullptr;
+       item = item->next) {
+    const char *member_name = typeattributeset_member_name(item);
+    if (member_name == nullptr) {
+      info.simple_member_list = false;
+      return info;
+    }
+
+
+    if (cstr_view(member_name) == label) {
+      info.contains_label_member = true;
+    }
+  }
+
+  return info;
+}
+
+static std::string summarize_typeattributeset_membership(
+    const struct cil_typeattributeset *attrset, std::string_view label) {
+  const char *attribute_name = typeattributeset_name(attrset);
+  if (attribute_name == nullptr || *attribute_name == '\0') {
+    attribute_name = "<?ATTR>";
+  }
+
+  return "(typeattributeset " + std::string(attribute_name) + " contains " +
+         std::string(label) + ")";
+}
+
+static rust::String make_cil_match_entry(struct cil_tree_node *node,
+                                         std::string_view text) {
+  char *path = cil_tree_get_cil_path(node);
+  std::string entry;
+  if (path != nullptr && *path != '\0') {
+    entry = std::string(path) + ":" + std::to_string(node->line) + "\n" +
+            std::string(text);
+  } else {
+    entry = std::string("line ") + std::to_string(node->line) + "\n" +
+            std::string(text);
+  }
+
+  return rust::String(entry);
+}
+
 static bool should_render_as_subtree(const struct cil_tree_node *node) noexcept {
   if (node == nullptr || node->cl_head == nullptr) {
     return false;
@@ -282,6 +405,20 @@ static int collect_label_matches(struct cil_tree_node *node,
     return SEPOL_OK;
   }
 
+  if (node->flavor == CIL_TYPEATTRIBUTESET) {
+    auto *attrset = static_cast<struct cil_typeattributeset *>(node->data);
+    auto membership = inspect_typeattributeset_membership(attrset, args->label);
+
+    if (membership.contains_label_member && !membership.matches_attribute_name &&
+        membership.simple_member_list) {
+      if (args->emitted_roots.insert(node).second) {
+        args->out->push_back(make_cil_match_entry(
+            node, summarize_typeattributeset_membership(attrset, args->label)));
+      }
+      return SEPOL_OK;
+    }
+  }
+
   std::string rendered_node = render_cil_node_text(node);
   if (rendered_node.empty() ||
       !contains_label_token(rendered_node, args->label)) {
@@ -308,17 +445,7 @@ static int collect_label_matches(struct cil_tree_node *node,
     return SEPOL_OK;
   }
 
-  char *path = cil_tree_get_cil_path(render_root);
-  std::string entry;
-  if (path != nullptr && *path != '\0') {
-    entry = std::string(path) + ":" + std::to_string(render_root->line) + "\n" +
-            rendered_root;
-  } else {
-    entry = std::string("line ") + std::to_string(render_root->line) + "\n" +
-            rendered_root;
-  }
-
-  args->out->push_back(rust::String(entry));
+  args->out->push_back(make_cil_match_entry(render_root, rendered_root));
   return SEPOL_OK;
 }
 
