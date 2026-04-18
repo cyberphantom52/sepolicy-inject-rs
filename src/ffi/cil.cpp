@@ -335,17 +335,8 @@ static std::string summarize_typeattributeset_membership(
 
 static rust::String make_cil_match_entry(struct cil_tree_node *node,
                                          std::string_view text) {
-  char *path = cil_tree_get_cil_path(node);
-  std::string entry;
-  if (path != nullptr && *path != '\0') {
-    entry = std::string(path) + ":" + std::to_string(node->line) + "\n" +
-            std::string(text);
-  } else {
-    entry = std::string("line ") + std::to_string(node->line) + "\n" +
-            std::string(text);
-  }
-
-  return rust::String(entry);
+  (void)node;
+  return rust::String(std::string(text));
 }
 
 static bool should_render_as_subtree(const struct cil_tree_node *node) noexcept {
