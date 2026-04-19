@@ -338,8 +338,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "m4rs"
-version = "0.1.0"
-source = "git+https://github.com/cyberphantom52/m4rs.git?rev=a55a7141311defcefd4b8e688d743f2ec83e21a9#a55a7141311defcefd4b8e688d743f2ec83e21a9"
+version = "0.1.1"
+source = "git+https://github.com/cyberphantom52/m4rs.git?rev=39f429bfcdf69780cbb04a3cf6bf5446bd74f0a5#39f429bfcdf69780cbb04a3cf6bf5446bd74f0a5"
 dependencies = [
  "pest",
  "pest_derive",
