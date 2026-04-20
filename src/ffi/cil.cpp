@@ -329,8 +329,8 @@ static std::string summarize_typeattributeset_membership(
     attribute_name = "<?ATTR>";
   }
 
-  return "(typeattributeset " + std::string(attribute_name) + " contains " +
-         std::string(label) + ")";
+  return "(typeattributeset " + std::string(attribute_name) + " (" +
+         std::string(label) + "))";
 }
 
 static rust::String make_cil_match_entry(struct cil_tree_node *node,
