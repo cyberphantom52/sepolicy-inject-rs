@@ -36,6 +36,19 @@ struct SourceArgs {
     compile_split: Vec<PathBuf>,
 }
 
+#[derive(Args)]
+#[group(id = "destination", required = true, multiple = false)]
+struct DestinationArgs {
+    /// Save patched policy to file
+    #[arg(long, short = 'o', value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Load patched policy directly into kernel
+    #[cfg(target_os = "android")]
+    #[arg(long)]
+    live_patch: bool,
+}
+
 /// SELinux Policy Injection Tool
 #[derive(Parser)]
 #[command(name = "sepolicy-inject-rs")]
@@ -59,22 +72,16 @@ enum Commands {
 
     /// Patch the policy with rules from .te files
     Patch {
-        /// .te file(s) to apply (can be specified multiple times)
-        #[arg(required = true, value_name = "FILE")]
-        files: Vec<PathBuf>,
+        /// .te file to apply (can be specified multiple times)
+        #[arg(long = "policy", short = 'p', required = true, value_name = ".te")]
+        policies: Vec<PathBuf>,
 
         /// M4 macro definition file (can be specified multiple times)
-        #[arg(long = "macro", short = 'm', value_name = "FILE")]
+        #[arg(long = "macro", short = 'm', value_name = ".m4")]
         macros: Vec<PathBuf>,
 
-        /// Save patched policy to file
-        #[arg(long, short = 'o', value_name = "FILE")]
-        output: Option<PathBuf>,
-
-        /// Load patched policy directly into kernel
-        #[cfg(target_os = "android")]
-        #[arg(long)]
-        live_patch: bool,
+        #[command(flatten)]
+        destination: DestinationArgs,
     },
 }
 
@@ -145,11 +152,9 @@ fn main() -> ExitCode {
             }
         }
         Some(Commands::Patch {
-            files,
+            policies: files,
             macros,
-            output,
-            #[cfg(target_os = "android")]
-            live_patch,
+            destination,
         }) => {
             for te_path in &files {
                 if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
@@ -160,7 +165,7 @@ fn main() -> ExitCode {
             info!(count = files.len(), "Successfully patched policy");
 
             // Save to output file if specified
-            if let Some(out_path) = output {
+            if let Some(out_path) = destination.output {
                 let path_str = out_path.to_string_lossy();
                 if !sepolicy.write(&path_str) {
                     error!(path = %path_str, "Failed to write policy to file");
@@ -171,7 +176,7 @@ fn main() -> ExitCode {
 
             // Live patch on Android
             #[cfg(target_os = "android")]
-            if live_patch {
+            if destination.live_patch {
                 if !sepolicy.write("/sys/fs/selinux/load") {
                     error!("Failed to load policy into kernel");
                     return ExitCode::FAILURE;
