@@ -24,6 +24,7 @@ statement = {
   | type_def
   | typealias_def
   | attribute_def
+  | expandattribute_def
   | attribute_role_def
   | typeattribute_def
   | roleattribute_def
@@ -104,6 +105,8 @@ cond_term = { EXPL? ~ (IDENTIFIER | "(" ~ cond_expr ~ ")") }
 type_def = { ^"type" ~ IDENTIFIER ~ ((^"alias" ~ names ~ ("," ~ comma_list)?) | ("," ~ comma_list)?) ~ ";"+ }
 
 attribute_def = { ^"attribute" ~ IDENTIFIER ~ ";"+ }
+
+expandattribute_def = { ^"expandattribute" ~ IDENTIFIER ~ bool_value ~ ";"+ }
 
 attribute_role_def = { ^"attribute_role" ~ IDENTIFIER ~ ";"+ }
 

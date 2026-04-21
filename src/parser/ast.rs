@@ -54,6 +54,7 @@ pub enum Statement {
     TypeAlias(TypeAlias),
     Attribute(Attribute),
     AttributeRole(AttributeRole),
+    ExpandAttribute(ExpandAttribute),
     TypeAttribute(TypeAttribute),
     RoleAttribute(RoleAttribute),
     TypeBound(TypeBound),
@@ -119,6 +120,13 @@ pub struct Attribute {
 #[derive(Debug, Clone)]
 pub struct AttributeRole {
     pub name: String,
+}
+
+/// Type attribute statement.
+#[derive(Debug, Clone)]
+pub struct ExpandAttribute {
+    pub attribute: String,
+    pub expand: bool,
 }
 
 /// Type attribute statement.

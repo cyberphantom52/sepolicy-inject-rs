@@ -68,6 +68,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> Result<Option<Statement
         Rule::type_def => Ok(Some(parse_type_def(inner)?)),
         Rule::typealias_def => Ok(Some(parse_typealias_def(inner)?)),
         Rule::attribute_def => Ok(Some(parse_attribute_def(inner)?)),
+        Rule::expandattribute_def => Ok(Some(parse_expandattribute_def(inner)?)),
         Rule::attribute_role_def => Ok(Some(parse_attribute_role_def(inner)?)),
         Rule::typeattribute_def => Ok(Some(parse_typeattribute_def(inner)?)),
         Rule::roleattribute_def => Ok(Some(parse_roleattribute_def(inner)?)),
@@ -359,6 +360,24 @@ fn parse_attribute_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, P
         .unwrap_or_default();
 
     Ok(Statement::Attribute(Attribute { name }))
+}
+
+fn parse_expandattribute_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseError> {
+    let mut attribute = String::new();
+    let mut expand = false;
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::IDENTIFIER => attribute = inner.as_str().to_string(),
+            Rule::bool_value => expand = inner.as_str().eq_ignore_ascii_case("true"),
+            _ => {}
+        }
+    }
+
+    Ok(Statement::ExpandAttribute(ExpandAttribute {
+        attribute,
+        expand,
+    }))
 }
 
 fn parse_attribute_role_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseError> {
