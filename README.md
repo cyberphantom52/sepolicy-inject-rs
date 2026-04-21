@@ -114,8 +114,12 @@ sepolicy-inject-rs --live-load print
 # Load from precompiled split policy
 sepolicy-inject-rs --load-split print
 
-# Compile split CIL policies
-sepolicy-inject-rs --compile-split print
+# Compile split CIL policies from an explicit ordered file list
+sepolicy-inject-rs \
+  --compile-split=/path/to/plat_sepolicy.cil \
+  --compile-split=/path/to/mapping.cil \
+  --compile-split=/path/to/vendor_sepolicy.cil \
+  print
 
 # Patch and save to file
 sepolicy-inject-rs --live-load patch rules.te -m te_macros.m4 --output /data/local/tmp/patched
@@ -124,7 +128,7 @@ sepolicy-inject-rs --live-load patch rules.te -m te_macros.m4 --output /data/loc
 sepolicy-inject-rs --live-load patch rules.te --live-patch
 ```
 
-> **Note**: `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
+> **Note**: Repeat `--compile-split /path/to/file.cil` to provide an ordered list of CIL files. Files are compiled in the order provided. `--compile-split` must be provided at least once with a file. `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
 
 ### Library Usage
 
@@ -233,4 +237,3 @@ Contributions are welcome! Please ensure:
 A significant portion of the code in this project was ported or adapted from [Magisk](https://github.com/topjohnwu/Magisk), particularly the SELinux policy manipulation and Android-specific functionality. Magisk is licensed under GPL-3.0.
 
 This project also includes code from the SELinux project (libsepol) which is licensed under LGPL.
-

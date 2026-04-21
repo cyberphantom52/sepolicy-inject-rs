@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sepolicy::{SePolicy, log};
+use sepolicy::{CilPolicy, SePolicy, log};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
@@ -12,10 +12,6 @@ struct SourceArgs {
     #[arg(long)]
     precompiled: Option<PathBuf>,
 
-    /// Load monolithic sepolicy from a CIL file
-    #[arg(long)]
-    cil: Option<PathBuf>,
-
     /// Load from live policy (Android only)
     #[cfg(target_os = "android")]
     #[arg(long)]
@@ -26,10 +22,14 @@ struct SourceArgs {
     #[arg(long)]
     load_split: bool,
 
-    /// Compile split cil policies (Android only)
-    #[cfg(target_os = "android")]
-    #[arg(long)]
-    compile_split: bool,
+    /// Compile split CIL policies from explicit ordered files
+    #[arg(
+        long,
+        value_name = "FILE",
+        num_args = 1,
+        action = clap::ArgAction::Append
+    )]
+    compile_split: Vec<PathBuf>,
 }
 
 /// SELinux Policy Injection Tool
@@ -99,6 +99,8 @@ fn main() -> ExitCode {
     // Determine the source and load the policy
     let sepolicy = if let Some(path) = &cli.source.precompiled {
         SePolicy::from_file(path)
+    } else if !cli.source.compile_split.is_empty() {
+        CilPolicy::compile_split(cli.source.compile_split.iter()).ok()
     } else {
         #[cfg(target_os = "android")]
         {
@@ -106,8 +108,6 @@ fn main() -> ExitCode {
                 SePolicy::from_file("/sys/fs/selinux/policy")
             } else if cli.source.load_split {
                 SePolicy::from_split()
-            } else if cli.source.compile_split {
-                SePolicy::compile_split()
             } else {
                 // This should never happen due to required group, but handle it gracefully
                 SePolicy::from_file("/sys/fs/selinux/policy")
