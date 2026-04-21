@@ -6,13 +6,17 @@ use tracing::{error, info};
 
 /// Source of the SELinux policy
 #[derive(Args)]
-#[group(id = "source", required = true, multiple = false)]
+#[cfg_attr(target_os = "android", group(id = "source", multiple = false))]
+#[cfg_attr(
+    not(target_os = "android"),
+    group(id = "source", required = true, multiple = false)
+)]
 struct SourceArgs {
     /// Load monolithic sepolicy from a precompiled file
     #[arg(long)]
     precompiled: Option<PathBuf>,
 
-    /// Load from live policy (Android only)
+    /// Load from live policy (Android only, default when no source flag is passed)
     #[cfg(target_os = "android")]
     #[arg(long)]
     live_load: bool,
@@ -109,15 +113,11 @@ fn main() -> ExitCode {
             } else if cli.source.load_split {
                 SePolicy::from_split()
             } else {
-                // This should never happen due to required group, but handle it gracefully
                 SePolicy::from_file("/sys/fs/selinux/policy")
             }
         }
         #[cfg(not(target_os = "android"))]
-        {
-            // This should never happen due to required group
-            unreachable!("Source group is required")
-        }
+        unreachable!("Source group is required")
     };
 
     let mut sepolicy = match sepolicy {
