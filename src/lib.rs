@@ -1,8 +1,11 @@
 mod cil;
+mod cil_source;
 pub mod log;
 pub mod parser;
 mod policy;
+mod te;
 
+pub use cil_source::CilSourcePolicy;
 pub use ffi::{CilPolicy, SePolicy};
 
 // Re-export log functions for FFI bridge
@@ -93,6 +96,7 @@ mod ffi {
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
         fn from_split_impl() -> UniquePtr<SePolicyImpl>;
         fn compile_split_impl() -> UniquePtr<SePolicyImpl>;
+
         fn from_data_impl(data: &[u8]) -> UniquePtr<SePolicyImpl>;
     }
 

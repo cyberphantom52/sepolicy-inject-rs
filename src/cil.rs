@@ -42,7 +42,30 @@ impl CilPolicy {
 
     /// Compile a single CIL file directly into a [`SePolicy`].
     pub fn compile_file(path: impl AsRef<Path>) -> Result<SePolicy, DynError> {
-        let mut policy = Self::from_file(path)?;
+        Self::compile_files([path])
+    }
+
+    /// Compile an ordered list of CIL files directly into a [`SePolicy`].
+    ///
+    /// Files are added to the underlying CIL database in the exact order they
+    /// are yielded by the iterator.
+    pub fn compile_files<P, I>(paths: I) -> Result<SePolicy, DynError>
+    where
+        P: AsRef<Path>,
+        I: IntoIterator<Item = P>,
+    {
+        let mut policy = Self::new();
+        let mut added_any = false;
+
+        for path in paths {
+            policy.add_file_mut(path)?;
+            added_any = true;
+        }
+
+        if !added_any {
+            return Err(invalid_input("at least one CIL file path must be provided"));
+        }
+
         policy.compile()
     }
 
