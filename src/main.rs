@@ -4,72 +4,72 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
 
-/// Source of the SELinux policy
-#[derive(Args)]
-#[cfg_attr(target_os = "android", group(id = "source", multiple = false))]
-#[cfg_attr(
-    not(target_os = "android"),
-    group(id = "source", required = true, multiple = false)
-)]
-struct SourceArgs {
-    /// Load monolithic sepolicy from a precompiled file
-    #[arg(long)]
-    precompiled: Option<PathBuf>,
+#[derive(Subcommand)]
+enum Source {
+    Cil {
+        #[arg(
+            long,
+            value_name = "FILE",
+            num_args = 1,
+            action = clap::ArgAction::Append
+        )]
+        split: Vec<PathBuf>,
 
-    /// Load from live policy (Android only, default when no source flag is passed)
+        #[command(subcommand)]
+        command: Option<CilCommand>,
+    },
+    Precompiled {
+        #[arg(long, value_name = "FILE")]
+        policy: PathBuf,
+
+        #[command(subcommand)]
+        command: Option<SepolCommand>,
+    },
+
     #[cfg(target_os = "android")]
-    #[arg(long)]
-    live_load: bool,
+    LoadSplit {
+        #[command(subcommand)]
+        command: Option<SepolCommand>,
+    },
 
-    /// Load from precompiled sepolicy or compile split cil policies (Android only)
     #[cfg(target_os = "android")]
-    #[arg(long)]
-    load_split: bool,
-
-    /// Compile split CIL policies from explicit ordered files
-    #[arg(
-        long,
-        value_name = "FILE",
-        num_args = 1,
-        action = clap::ArgAction::Append
-    )]
-    compile_split: Vec<PathBuf>,
-}
-
-#[derive(Args)]
-#[group(id = "destination", required = true, multiple = false)]
-struct DestinationArgs {
-    /// Save patched policy to file
-    #[arg(long, short = 'o', value_name = "FILE")]
-    output: Option<PathBuf>,
-
-    /// Load patched policy directly into kernel
-    #[cfg(target_os = "android")]
-    #[arg(long)]
-    live_patch: bool,
-}
-
-/// SELinux Policy Injection Tool
-#[derive(Parser)]
-#[command(name = "sepolicy-inject-rs")]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[command(flatten)]
-    source: SourceArgs,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
+    LiveLoad {
+        #[command(subcommand)]
+        command: Option<SepolCommand>,
+    },
 }
 
 #[derive(Subcommand)]
-enum Commands {
-    /// Print rules from the loaded sepolicy
+enum CilCommand {
+    /// Compile CIL into a binary policy, then optionally act on it
+    Compile {
+        /// Optionally save the compiled binary policy to disk
+        #[arg(long, short = 'o', value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        #[command(subcommand)]
+        command: Option<SepolCommand>,
+    },
+
+    #[command(flatten)]
+    Shared(Commands),
+}
+
+#[derive(Subcommand)]
+enum SepolCommand {
+    /// Print rules from the sepolicy
     Print {
         /// Type of rules to print
         #[arg(value_enum, default_value_t = RuleType::All)]
         rule_type: RuleType,
     },
 
+    #[command(flatten)]
+    Shared(Commands),
+}
+
+#[derive(Subcommand)]
+enum Commands {
     /// Patch the policy with rules from .te files
     Patch {
         /// .te file to apply (can be specified multiple times)
@@ -81,8 +81,27 @@ enum Commands {
         macros: Vec<PathBuf>,
 
         #[command(flatten)]
-        destination: DestinationArgs,
+        destination: Destination,
     },
+}
+
+#[derive(Args)]
+struct Destination {
+    #[arg(long, short = 'o', value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    #[cfg(target_os = "android")]
+    #[arg(long)]
+    live_patch: bool,
+}
+
+/// SELinux Policy Injection Tool
+#[derive(Parser)]
+#[command(name = "sepolicy-inject-rs")]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    source: Source,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -102,107 +121,134 @@ enum RuleType {
 }
 
 fn main() -> ExitCode {
-    // Initialize tracing subscriber
     log::init_subscriber();
 
     let cli = Cli::parse();
 
-    // Determine the source and load the policy
-    let sepolicy = if let Some(path) = &cli.source.precompiled {
-        SePolicy::from_file(path)
-    } else if !cli.source.compile_split.is_empty() {
-        CilPolicy::compile_split(cli.source.compile_split.iter()).ok()
-    } else {
-        #[cfg(target_os = "android")]
-        {
-            if cli.source.live_load {
-                SePolicy::from_file("/sys/fs/selinux/policy")
-            } else if cli.source.load_split {
-                SePolicy::from_split()
-            } else {
-                SePolicy::from_file("/sys/fs/selinux/policy")
-            }
-        }
-        #[cfg(not(target_os = "android"))]
-        unreachable!("Source group is required")
-    };
-
-    let mut sepolicy = match sepolicy {
-        Some(s) => s,
-        None => {
-            error!("Cannot load policy");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // Handle commands
-    match cli.command {
-        Some(Commands::Print { rule_type }) => {
-            let rules = match rule_type {
-                RuleType::All => sepolicy.rules(),
-                RuleType::Attributes => sepolicy.attributes(),
-                RuleType::Types => sepolicy.types(),
-                RuleType::Avtabs => sepolicy.avtabs(),
-                RuleType::Transitions => sepolicy.transitions(),
-                RuleType::Genfs => sepolicy.genfs_contexts(),
+    match cli.source {
+        Source::Cil { split, command } => {
+            let (output, inner_command) = match command {
+                Some(CilCommand::Compile { output, command }) => (output, command),
+                Some(CilCommand::Shared(_)) => {
+                    error!("Direct CIL operations not implemented yet");
+                    return ExitCode::FAILURE;
+                }
+                None => (None, None),
             };
 
+            let Ok(mut policy) = CilPolicy::compile_split(split.iter()) else {
+                error!("Failed to compile CIL policy");
+                return ExitCode::FAILURE;
+            };
+
+            if let Some(out_path) = output {
+                if !policy.write(&out_path.to_string_lossy()) {
+                    error!(path = %out_path.display(), "Failed to write compiled policy");
+                    return ExitCode::FAILURE;
+                }
+                info!(path = %out_path.display(), "Wrote compiled policy to file");
+            }
+
+            handle_sepol_command(inner_command, &mut policy)
+        }
+
+        Source::Precompiled { policy, command } => {
+            let Some(mut policy) = SePolicy::from_file(policy) else {
+                error!("Failed to load precompiled policy");
+                return ExitCode::FAILURE;
+            };
+            handle_sepol_command(command, &mut policy)
+        }
+
+        #[cfg(target_os = "android")]
+        Source::LoadSplit { command } => {
+            let Some(mut policy) = SePolicy::from_split() else {
+                error!("");
+                return ExitCode::FAILURE;
+            };
+            handle_sepol_command(command, &mut policy)
+        }
+
+        #[cfg(target_os = "android")]
+        Source::LiveLoad { command } => {
+            let Some(mut policy) = SePolicy::from_file("/sys/fs/selinux/policy") else {
+                error!("Failed to load live policy");
+                return ExitCode::FAILURE;
+            };
+            handle_sepol_command(command, &mut policy)
+        }
+    }
+}
+
+fn handle_sepol_command(command: Option<SepolCommand>, policy: &mut SePolicy) -> ExitCode {
+    match command {
+        Some(SepolCommand::Print { rule_type }) => {
+            let rules = match rule_type {
+                RuleType::All => policy.rules(),
+                RuleType::Attributes => policy.attributes(),
+                RuleType::Types => policy.types(),
+                RuleType::Avtabs => policy.avtabs(),
+                RuleType::Transitions => policy.transitions(),
+                RuleType::Genfs => policy.genfs_contexts(),
+            };
             for rule in rules {
                 println!("{}", rule);
             }
         }
-        Some(Commands::Patch {
-            policies: files,
+
+        Some(SepolCommand::Shared(cmd)) => return handle_command(cmd, policy),
+
+        None => print_summary(policy),
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn handle_command(command: Commands, policy: &mut SePolicy) -> ExitCode {
+    match command {
+        Commands::Patch {
+            policies,
             macros,
             destination,
-        }) => {
-            for te_path in &files {
-                if let Err(e) = sepolicy.load_rules_from_file(te_path, &macros) {
+        } => {
+            for te_path in &policies {
+                if let Err(e) = policy.load_rules_from_file(te_path, &macros) {
                     error!(path = %te_path.display(), error = %e, "Error applying policy file");
                     return ExitCode::FAILURE;
                 }
             }
-            info!(count = files.len(), "Successfully patched policy");
+            info!(count = policies.len(), "Successfully patched policy");
 
-            // Save to output file if specified
-            if let Some(out_path) = destination.output {
-                let path_str = out_path.to_string_lossy();
-                if !sepolicy.write(&path_str) {
-                    error!(path = %path_str, "Failed to write policy to file");
+            if let Some(file) = destination.output {
+                if !policy.write(&file.to_string_lossy()) {
+                    error!(path = %file.display(), "Failed to write patched policy");
                     return ExitCode::FAILURE;
                 }
-                info!(path = %path_str, "Wrote patched policy to file");
+                info!(path = %file.display(), "Wrote patched policy to file");
             }
 
-            // Live patch on Android
             #[cfg(target_os = "android")]
             if destination.live_patch {
-                if !sepolicy.write("/sys/fs/selinux/load") {
-                    error!("Failed to load policy into kernel");
+                if !policy.write("/sys/fs/selinux/load") {
+                    error!("Failed to load patched policy into kernel");
                     return ExitCode::FAILURE;
                 }
                 info!("Successfully loaded patched policy into kernel");
             }
         }
-        None => {
-            // No command specified, show basic info
-            let attrs = sepolicy.attributes();
-            let types = sepolicy.types();
-            let avtabs = sepolicy.avtabs();
-            let transitions = sepolicy.transitions();
-            let genfs = sepolicy.genfs_contexts();
-
-            println!("Policy loaded successfully!");
-            println!("  Attributes:     {}", attrs.len());
-            println!("  Types:          {}", types.len());
-            println!("  AV Rules:       {}", avtabs.len());
-            println!("  Transitions:    {}", transitions.len());
-            println!("  Genfs Contexts: {}", genfs.len());
-            println!();
-            println!("Use 'print' subcommand to display rules.");
-            println!("Use 'patch' subcommand to apply .te files.");
-        }
     }
 
     ExitCode::SUCCESS
+}
+
+fn print_summary(policy: &mut SePolicy) {
+    println!("Policy loaded successfully!");
+    println!("  Attributes:     {}", policy.attributes().len());
+    println!("  Types:          {}", policy.types().len());
+    println!("  AV Rules:       {}", policy.avtabs().len());
+    println!("  Transitions:    {}", policy.transitions().len());
+    println!("  Genfs Contexts: {}", policy.genfs_contexts().len());
+    println!();
+    println!("Use 'print' subcommand to display rules.");
+    println!("Use 'patch' subcommand to apply .te files.");
 }
