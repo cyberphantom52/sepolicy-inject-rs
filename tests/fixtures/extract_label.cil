@@ -1,0 +1,37 @@
+(class process (transition))
+(class file (read getattr map execute open entrypoint))
+(classorder (process file))
+
+
+(type init)
+(type shell)
+
+(role object_r)
+
+(typeattribute exec_type)
+(typeattribute file_type)
+(typeattribute hal_charger_related)
+(typeattribute vendor_exec_attr)
+
+(type hal_charger_oplus)
+(roletype object_r hal_charger_oplus)
+
+(type hal_charger_oplus_exec)
+(roletype object_r hal_charger_oplus_exec)
+
+(typeattributeset exec_type (hal_charger_oplus_exec))
+(typeattributeset file_type (hal_charger_oplus_exec))
+(typeattributeset hal_charger_related (hal_charger_oplus hal_charger_oplus_exec))
+
+(typealias hal_charger_exec_alias)
+(typealiasactual hal_charger_exec_alias hal_charger_oplus_exec)
+
+(typepermissive hal_charger_oplus)
+
+(allow init hal_charger_oplus_exec (file (read getattr map execute open)))
+(allow hal_charger_oplus hal_charger_oplus_exec (file (read getattr map execute open entrypoint)))
+(typetransition init hal_charger_oplus_exec process hal_charger_oplus)
+
+(type vendor_unused_exec)
+(typeattributeset vendor_exec_attr (vendor_unused_exec))
+(allow shell vendor_unused_exec (file (read open)))
