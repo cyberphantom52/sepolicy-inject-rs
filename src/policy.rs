@@ -142,6 +142,7 @@ impl SePolicy {
             Statement::TypeRule(rule) => self.apply_typerule(rule),
             Statement::Type(def) => self.apply_type_def(def),
             Statement::Attribute(attr) => self.attribute(&attr.name),
+            Statement::ExpandAttribute(_) => {}
             Statement::TypeAttribute(ta) => self.apply_typeattribute(ta),
             Statement::Permissive(p) => self.permissive(&[p.type_name.as_str()]),
             Statement::GenfsContext(g) => self.apply_genfscon(g),
