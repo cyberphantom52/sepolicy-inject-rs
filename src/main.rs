@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sepolicy::{CilPolicy, SePolicy, log};
+use sepolicy::{CilPolicy, CilSourcePolicy, SePolicy, log};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{error, info};
@@ -12,7 +12,7 @@ struct SourceArgs {
     #[arg(long)]
     precompiled: Option<PathBuf>,
 
-    /// Load monolithic sepolicy from a CIL file (compiled internally)
+    /// Load policy from a CIL file. Patch operations edit the CIL source; other operations compile it internally.
     #[arg(long)]
     cil: Option<PathBuf>,
 
@@ -26,8 +26,7 @@ struct SourceArgs {
     #[arg(long)]
     load_split: bool,
 
-    /// Compile split CIL policies (Android only)
-    #[cfg(target_os = "android")]
+    /// Compile split CIL policies. On non-Android, provide them explicitly with `--split-cil <FILE>`.
     #[arg(long)]
     compile_split: bool,
 }
@@ -39,6 +38,12 @@ struct SourceArgs {
 struct Cli {
     #[command(flatten)]
     source: SourceArgs,
+
+    /// Split CIL file(s) to compile when using `--compile-split`
+    ///
+    /// On non-Android targets, `--compile-split` requires at least one of these.
+    #[arg(long = "split-cil", value_name = "FILE")]
+    split_cils: Vec<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -62,6 +67,10 @@ enum Commands {
         /// M4 macro definition file (can be specified multiple times)
         #[arg(long = "macro", short = 'm', value_name = "FILE")]
         macros: Vec<PathBuf>,
+
+        /// CIL mapping file(s) used to remap unsuffixed TE names to Android API-suffixed CIL names
+        #[arg(long = "mapping", value_name = "FILE")]
+        mappings: Vec<PathBuf>,
 
         /// Save patched policy to file
         #[arg(long, short = 'o', value_name = "FILE")]
@@ -99,7 +108,10 @@ enum RuleType {
     Genfs,
 }
 
-fn load_policy_from_source(source: &SourceArgs) -> Result<SePolicy, String> {
+fn load_policy_from_source(
+    source: &SourceArgs,
+    split_cils: &[PathBuf],
+) -> Result<SePolicy, String> {
     if let Some(path) = &source.precompiled {
         return SePolicy::from_file(path)
             .ok_or_else(|| format!("failed to load precompiled policy: {}", path.display()));
@@ -111,6 +123,35 @@ fn load_policy_from_source(source: &SourceArgs) -> Result<SePolicy, String> {
             .map_err(|e| format!("failed to compile CIL file {}: {}", path.display(), e));
     }
 
+    if source.compile_split {
+        if !split_cils.is_empty() {
+            info!(
+                count = split_cils.len(),
+                "Compiling policy from manually specified split CIL files"
+            );
+            return CilPolicy::compile_files(split_cils.iter()).map_err(|e| {
+                format!(
+                    "failed to compile manually specified split CIL files: {}",
+                    e
+                )
+            });
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            return SePolicy::compile_split()
+                .ok_or_else(|| "failed to compile split policy".to_string());
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            return Err(
+                "on non-Android targets, '--compile-split' requires at least one '--split-cil <FILE>'"
+                    .to_string(),
+            );
+        }
+    }
+
     #[cfg(target_os = "android")]
     {
         if source.live_load {
@@ -118,8 +159,6 @@ fn load_policy_from_source(source: &SourceArgs) -> Result<SePolicy, String> {
                 .ok_or_else(|| "failed to load live policy".to_string())
         } else if source.load_split {
             SePolicy::from_split().ok_or_else(|| "failed to load split policy".to_string())
-        } else if source.compile_split {
-            SePolicy::compile_split().ok_or_else(|| "failed to compile split policy".to_string())
         } else {
             Err("no policy source selected".to_string())
         }
@@ -205,11 +244,76 @@ fn print_cil_results(results: &[(String, Vec<String>)]) {
     }
 }
 
+fn patch_cil_source(
+    source: &SourceArgs,
+    files: &[PathBuf],
+    macros: &[PathBuf],
+    mappings: &[PathBuf],
+    output: Option<&PathBuf>,
+    #[cfg(target_os = "android")] live_patch: bool,
+) -> Result<(), String> {
+    let path = source
+        .cil
+        .as_ref()
+        .ok_or_else(|| "the 'patch' subcommand requires '--cil <FILE>'".to_string())?;
+
+    let out_path =
+        output.ok_or_else(|| "patching a CIL source requires '--output <FILE>'".to_string())?;
+
+    #[cfg(target_os = "android")]
+    if live_patch {
+        return Err(
+            "live patching is not supported when using '--cil'; write the patched CIL to a file instead"
+                .to_string(),
+        );
+    }
+
+    info!(
+        path = %path.display(),
+        count = files.len(),
+        mapping_count = mappings.len(),
+        "Patching CIL source policy with .te files"
+    );
+
+    let mut policy = CilSourcePolicy::from_file(path)
+        .map_err(|e| format!("failed to load CIL source {}: {}", path.display(), e))?;
+
+    policy
+        .load_mapping_files(mappings)
+        .map_err(|e| format!("failed to load mapping CIL files: {}", e))?;
+
+    for te_path in files {
+        policy.load_rules_from_file(te_path, macros).map_err(|e| {
+            format!(
+                "failed to render CIL patch from {}: {}",
+                te_path.display(),
+                e
+            )
+        })?;
+    }
+
+    policy.write(out_path).map_err(|e| {
+        format!(
+            "failed to write patched CIL file {}: {}",
+            out_path.display(),
+            e
+        )
+    })?;
+
+    info!(path = %out_path.display(), "Wrote patched CIL source policy");
+    Ok(())
+}
+
 fn main() -> ExitCode {
     // Initialize tracing subscriber
     log::init_subscriber();
 
     let cli = Cli::parse();
+
+    if !cli.split_cils.is_empty() && !cli.source.compile_split {
+        error!("'--split-cil' can only be used together with '--compile-split'");
+        return ExitCode::FAILURE;
+    }
 
     // Handle extraction directly from CIL without compiling to policydb first.
     if let Some(Commands::Extract { labels }) = &cli.command {
@@ -225,8 +329,35 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Some(Commands::Patch {
+        files,
+        macros,
+        mappings,
+        output,
+        #[cfg(target_os = "android")]
+        live_patch,
+    }) = &cli.command
+    {
+        if cli.source.cil.is_some() {
+            if let Err(e) = patch_cil_source(
+                &cli.source,
+                files,
+                macros,
+                mappings,
+                output.as_ref(),
+                #[cfg(target_os = "android")]
+                *live_patch,
+            ) {
+                error!(error = %e, "Failed to patch CIL source");
+                return ExitCode::FAILURE;
+            }
+
+            return ExitCode::SUCCESS;
+        }
+    }
+
     // Determine the source and load the policy
-    let mut sepolicy = match load_policy_from_source(&cli.source) {
+    let mut sepolicy = match load_policy_from_source(&cli.source, &cli.split_cils) {
         Ok(policy) => policy,
         Err(e) => {
             error!(error = %e, "Cannot load policy");
@@ -253,6 +384,7 @@ fn main() -> ExitCode {
         Some(Commands::Patch {
             files,
             macros,
+            mappings: _,
             output,
             #[cfg(target_os = "android")]
             live_patch,

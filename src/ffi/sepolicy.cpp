@@ -145,25 +145,8 @@ from_data_impl(rust::Slice<const uint8_t> data) noexcept {
   return std::make_unique<SePolicyImpl>(db);
 }
 
-std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
-  const char *odm_pre = ODM_POLICY_DIR "precompiled_sepolicy";
-  const char *vend_pre = VEND_POLICY_DIR "precompiled_sepolicy";
-
-  ffi_log_debug("Checking for precompiled policy");
-
-  if (access(odm_pre, R_OK) == 0 && check_precompiled(odm_pre)) {
-    ffi_log_info(std::string("Using precompiled policy from: ") + odm_pre);
-    return from_file_impl(odm_pre);
-  } else if (access(vend_pre, R_OK) == 0 && check_precompiled(vend_pre)) {
-    ffi_log_info(std::string("Using precompiled policy from: ") + vend_pre);
-    return from_file_impl(vend_pre);
-  } else {
-    ffi_log_info("No valid precompiled policy found, compiling from CIL");
-    return compile_split_impl();
-  }
-}
-
-std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
+static std::unique_ptr<SePolicyImpl>
+compile_split_impl_internal() noexcept {
   char path[128], plat_ver[10];
   FILE *f;
   int policy_ver;
@@ -215,6 +198,28 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
     ffi_log_error("Failed to compile CIL policies");
   }
   return result;
+}
+
+std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
+  const char *odm_pre = ODM_POLICY_DIR "precompiled_sepolicy";
+  const char *vend_pre = VEND_POLICY_DIR "precompiled_sepolicy";
+
+  ffi_log_debug("Checking for precompiled policy");
+
+  if (access(odm_pre, R_OK) == 0 && check_precompiled(odm_pre)) {
+    ffi_log_info(std::string("Using precompiled policy from: ") + odm_pre);
+    return from_file_impl(odm_pre);
+  } else if (access(vend_pre, R_OK) == 0 && check_precompiled(vend_pre)) {
+    ffi_log_info(std::string("Using precompiled policy from: ") + vend_pre);
+    return from_file_impl(vend_pre);
+  } else {
+    ffi_log_info("No valid precompiled policy found, compiling from CIL");
+    return compile_split_impl();
+  }
+}
+
+std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
+  return compile_split_impl_internal();
 }
 
 rust::Vec<rust::String> SePolicy::attributes() const noexcept {
