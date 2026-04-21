@@ -105,11 +105,11 @@ sepolicy-inject-rs --precompiled /path/to/policy patch rules.te --output /path/t
 
 #### Android-Specific Usage
 
-On Android devices, additional options are available:
+On Android devices, `--live-load` is the default source when you do not pass `--precompiled`, `--load-split`, or `--compile-split`.
 
 ```bash
-# Load from live policy from `/sys/fs/selinux/policy` and print
-sepolicy-inject-rs --live-load print
+# Load from the default live policy from `/sys/fs/selinux/policy` and print
+sepolicy-inject-rs print
 
 # Load from precompiled split policy
 sepolicy-inject-rs --load-split print
@@ -122,13 +122,13 @@ sepolicy-inject-rs \
   print
 
 # Patch and save to file
-sepolicy-inject-rs --live-load patch rules.te -m te_macros.m4 --output /data/local/tmp/patched
+sepolicy-inject-rs patch rules.te -m te_macros.m4 --output /data/local/tmp/patched
 
 # Patch and load directly into kernel
-sepolicy-inject-rs --live-load patch rules.te --live-patch
+sepolicy-inject-rs patch rules.te --live-patch
 ```
 
-> **Note**: Repeat `--compile-split /path/to/file.cil` to provide an ordered list of CIL files. Files are compiled in the order provided. `--compile-split` must be provided at least once with a file. `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
+> **Note**: On Android, `--live-load` is the default source when no explicit source option is provided. Repeat `--compile-split=/path/to/file.cil` to provide an ordered list of CIL files. Files are compiled in the order provided. `--compile-split` must be provided at least once with a file. `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
 
 ### Library Usage
 
