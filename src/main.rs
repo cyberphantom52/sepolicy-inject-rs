@@ -148,23 +148,25 @@ fn main() -> ExitCode {
 
     match cli.source {
         Source::Cil(cil_source) => match cil_source {
-            CilSourceCommand::Cil { source, command } => {
-                let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
-                    error!("Failed to compile CIL policy");
-                    return ExitCode::FAILURE;
-                };
-
-                let cil_command = match command {
-                    Some(SingleCilCommand::Compile(cmd)) => Some(cmd),
-                    Some(SingleCilCommand::Shared(_)) => {
-                        error!("Direct CIL operations not implemented yet");
+            CilSourceCommand::Cil { source, command } => match command {
+                Some(SingleCilCommand::Compile(cmd)) => {
+                    let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
+                        error!("Failed to compile CIL policy");
                         return ExitCode::FAILURE;
-                    }
-                    None => None,
-                };
+                    };
 
-                handle_cil_compile_command(cil_command, &mut policy)
-            }
+                    handle_cil_compile_command(Some(cmd), &mut policy)
+                }
+                Some(SingleCilCommand::Shared(cmd)) => handle_single_cil_command(&source, cmd),
+                None => {
+                    let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
+                        error!("Failed to compile CIL policy");
+                        return ExitCode::FAILURE;
+                    };
+
+                    handle_cil_compile_command(None, &mut policy)
+                }
+            },
 
             CilSourceCommand::SplitCil { source, command } => {
                 let Ok(mut policy) = CilPolicy::compile_split(source.iter()) else {
@@ -280,6 +282,93 @@ fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
                 }
                 info!("Successfully loaded patched policy into kernel");
             }
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn prepare_cil_patch(
+    source: &Path,
+    policies: &[PathBuf],
+    macros: &[PathBuf],
+) -> Result<CilPolicy, String> {
+    let mut cil_policy = CilPolicy::from_file(source).map_err(|e| {
+        error!(path = %source.display(), error = %e, "Failed to load CIL file");
+        format!("Failed to load CIL file: {}", e)
+    })?;
+
+    for te_path in policies {
+        let policy = prepare_patch(te_path, macros)?;
+
+        cil_policy = cil_policy.add_policy(&policy).map_err(|e| {
+            error!(path = %te_path.display(), error = %e, "Failed to translate patch policy into CIL");
+            format!("Failed to translate patch policy into CIL: {}", e)
+        })?;
+    }
+
+    Ok(cil_policy)
+}
+
+fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
+    match command {
+        Commands::Patch {
+            policies,
+            macros,
+            destination,
+        } => {
+            let Destination {
+                output,
+                #[cfg(target_os = "android")]
+                live_patch,
+            } = destination;
+
+            let needs_output = output.is_some();
+
+            #[cfg(target_os = "android")]
+            let needs_live_patch = live_patch;
+            #[cfg(not(target_os = "android"))]
+            let needs_live_patch = false;
+
+            if !needs_output && !needs_live_patch {
+                let Ok(_cil_policy) = prepare_cil_patch(source, &policies, &macros) else {
+                    return ExitCode::FAILURE;
+                };
+                info!(count = policies.len(), "Successfully patched CIL policy");
+                return ExitCode::SUCCESS;
+            }
+
+            if let Some(file) = output {
+                let Ok(mut cil_policy) = prepare_cil_patch(source, &policies, &macros) else {
+                    return ExitCode::FAILURE;
+                };
+
+                if let Err(err) = cil_policy.write(&file) {
+                    error!(path = %file.display(), error = %err, "Failed to write patched CIL policy");
+                    return ExitCode::FAILURE;
+                }
+                info!(path = %file.display(), "Wrote patched CIL policy to file");
+            }
+
+            #[cfg(target_os = "android")]
+            if live_patch {
+                let Ok(mut cil_policy) = prepare_cil_patch(source, &policies, &macros) else {
+                    return ExitCode::FAILURE;
+                };
+
+                let Ok(policy) = cil_policy.compile() else {
+                    error!("Failed to compile patched CIL policy");
+                    return ExitCode::FAILURE;
+                };
+
+                if !policy.write("/sys/fs/selinux/load") {
+                    error!("Failed to load patched CIL policy into kernel");
+                    return ExitCode::FAILURE;
+                }
+                info!("Successfully loaded patched CIL policy into kernel");
+            }
+
+            info!(count = policies.len(), "Successfully patched CIL policy");
         }
     }
 
