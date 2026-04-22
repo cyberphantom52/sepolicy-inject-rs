@@ -46,7 +46,13 @@ impl ToCil for Statement {
             Statement::IoportCon(ioportcon) => ioportcon.to_cil(),
             Statement::PciDeviceCon(pcidevicecon) => pcidevicecon.to_cil(),
             Statement::DevicetreeCon(devicetreecon) => devicetreecon.to_cil(),
-            _ => None,
+            _ => {
+                warn!(
+                    statement = ?self,
+                    "Skipping unsupported statement during CIL rendering"
+                );
+                Some(Vec::new())
+            }
         }
     }
 }

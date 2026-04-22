@@ -1,11 +1,19 @@
 #include "sepolicy-inject-rs/src/lib.rs.h"
-#include "mmap.hpp"
+#include "utils.hpp"
 
+#include <atomic>
 #include <cil/cil.h>
 #include <memory>
 
 // Logging target for CIL operations
 static constexpr const char *CIL_LOG_TARGET = "sepolicy::cil";
+static std::atomic_size_t NEXT_CIL_SOURCE_ID{1};
+
+static std::string next_generated_cil_name() {
+  auto id = NEXT_CIL_SOURCE_ID.fetch_add(1, std::memory_order_relaxed);
+  return std::string("generated_input_") + std::to_string(id) + ".cil";
+}
+
 
 // Setup CIL log handler to route messages through Rust's tracing
 static void setup_cil_logging() {
@@ -44,34 +52,58 @@ std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept {
 
 CilPolicyImpl::~CilPolicyImpl() {
   cil_db_destroy(&db);
-  free(db);
 }
 
-bool CilPolicyImpl::add_file(rust::Str path) noexcept {
+bool CilPolicyImpl::add_file(rust::Str source) noexcept {
+  return add_file(source.data(), source.size());
+}
+
+bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
+  auto name = next_generated_cil_name();
+  log_trace(CIL_LOG_TARGET,
+            std::string("Loading in-memory CIL source: ") + name);
+
+  if (source == nullptr || size == 0) {
+    log_error(CIL_LOG_TARGET,
+              std::string("Refusing to load empty CIL source: ") + name);
+    return false;
+  }
+
+  if (cil_add_file(db, name.c_str(), source, size) != SEPOL_OK) {
+    log_error(CIL_LOG_TARGET,
+              std::string("Failed to parse CIL source: ") + name);
+    return false;
+  }
+
+  log_debug(CIL_LOG_TARGET,
+            std::string("Successfully loaded in-memory CIL source: ") + name +
+                " (" + std::to_string(size) + " bytes)");
+  return true;
+}
+
+bool CilPolicyImpl::write(rust::Str path) noexcept {
   std::string path_str(path.data(), path.size());
-  return add_file(path_str.c_str());
+  return write(path_str.c_str());
 }
 
-bool CilPolicyImpl::add_file(const char *path) noexcept {
-  log_trace(CIL_LOG_TARGET, std::string("Loading CIL file: ") + path);
+bool CilPolicyImpl::write(const char *path) noexcept {
+  log_info(CIL_LOG_TARGET, std::string("Writing merged CIL AST to: ") + path);
 
-  mmap_data data(path);
-  if (!data.data() || data.size() == 0) {
+  auto out = open_file(path, "w");
+  if (!out) {
     log_error(CIL_LOG_TARGET,
-              std::string("Failed to mmap CIL file: ") + path);
+              std::string("Failed to open output file for writing: ") + path);
     return false;
   }
 
-  if (cil_add_file(db, path, (const char *)data.data(), data.size()) !=
-      SEPOL_OK) {
+  if (cil_write_build_ast(out->get(), db) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET,
-              std::string("Failed to parse CIL file: ") + path);
+              std::string("Failed to write merged CIL AST: ") + path);
     return false;
   }
 
-  log_debug(CIL_LOG_TARGET, std::string("Successfully loaded CIL file: ") +
-                                path + " (" + std::to_string(data.size()) +
-                                " bytes)");
+  log_info(CIL_LOG_TARGET,
+           std::string("Successfully wrote merged CIL AST: ") + path);
   return true;
 }
 

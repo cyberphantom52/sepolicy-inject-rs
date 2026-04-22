@@ -15,8 +15,10 @@ public:
   CilPolicyImpl();
   ~CilPolicyImpl();
 
-  bool add_file(rust::Str path) noexcept;
-  bool add_file(const char *path) noexcept;
+  bool add_file(rust::Str source) noexcept;
+  bool add_file(const char *source, size_t size) noexcept;
+  bool write(rust::Str path) noexcept;
+  bool write(const char *path) noexcept;
   void set_policy_version(int version) noexcept;
   std::unique_ptr<SePolicyImpl> compile() noexcept;
 };
