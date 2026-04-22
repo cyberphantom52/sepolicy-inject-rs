@@ -101,6 +101,15 @@ enum Commands {
         #[arg(long = "macro", short = 'm', value_name = ".m4")]
         macros: Vec<PathBuf>,
 
+        /// Additional CIL files to load before the patched source when resolving references
+        #[arg(
+            long = "resolve-with",
+            value_name = ".cil",
+            num_args = 1,
+            action = clap::ArgAction::Append
+        )]
+        resolve_with: Vec<PathBuf>,
+
         #[command(flatten)]
         destination: Destination,
     },
@@ -256,6 +265,7 @@ fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
         Commands::Patch {
             policies,
             macros,
+            resolve_with: _,
             destination,
         } => {
             for te_path in &policies {
@@ -288,14 +298,17 @@ fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn prepare_cil_patch(
-    source: &Path,
+fn prepare_cil_patch_from_files<'a, I>(
+    files: I,
     policies: &[PathBuf],
     macros: &[PathBuf],
-) -> Result<CilPolicy, String> {
-    let mut cil_policy = CilPolicy::from_file(source).map_err(|e| {
-        error!(path = %source.display(), error = %e, "Failed to load CIL file");
-        format!("Failed to load CIL file: {}", e)
+) -> Result<CilPolicy, String>
+where
+    I: IntoIterator<Item = &'a Path>,
+{
+    let mut cil_policy = CilPolicy::from_files(files).map_err(|e| {
+        error!(error = %e, "Failed to load CIL file(s)");
+        format!("Failed to load CIL file(s): {}", e)
     })?;
 
     for te_path in policies {
@@ -310,11 +323,41 @@ fn prepare_cil_patch(
     Ok(cil_policy)
 }
 
+fn prepare_cil_patch(
+    source: &Path,
+    policies: &[PathBuf],
+    macros: &[PathBuf],
+) -> Result<CilPolicy, String> {
+    prepare_cil_patch_from_files(std::iter::once(source), policies, macros)
+}
+
+fn validate_cil_patch(
+    source: &Path,
+    resolve_with: &[PathBuf],
+    policies: &[PathBuf],
+    macros: &[PathBuf],
+) -> Result<(), String> {
+    let mut cil_policy = prepare_cil_patch_from_files(
+        resolve_with
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(std::iter::once(source)),
+        policies,
+        macros,
+    )?;
+
+    cil_policy.validate().map_err(|e| {
+        error!(path = %source.display(), error = %e, "Failed to resolve patched CIL policy");
+        format!("Failed to resolve patched CIL policy: {}", e)
+    })
+}
+
 fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
     match command {
         Commands::Patch {
             policies,
             macros,
+            resolve_with,
             destination,
         } => {
             let Destination {
@@ -330,10 +373,11 @@ fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
             #[cfg(not(target_os = "android"))]
             let needs_live_patch = false;
 
+            if validate_cil_patch(source, &resolve_with, &policies, &macros).is_err() {
+                return ExitCode::FAILURE;
+            }
+
             if !needs_output && !needs_live_patch {
-                let Ok(_cil_policy) = prepare_cil_patch(source, &policies, &macros) else {
-                    return ExitCode::FAILURE;
-                };
                 info!(count = policies.len(), "Successfully patched CIL policy");
                 return ExitCode::SUCCESS;
             }

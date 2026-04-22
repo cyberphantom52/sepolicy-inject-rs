@@ -81,6 +81,25 @@ bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
   return true;
 }
 
+bool CilPolicyImpl::validate() noexcept {
+  log_info(CIL_LOG_TARGET, "Validating CIL AST with libsepol resolution...");
+
+  unique_file sink(std::tmpfile());
+  if (!sink) {
+    log_error(CIL_LOG_TARGET,
+              "Failed to create temporary file for CIL AST validation");
+    return false;
+  }
+
+  if (cil_write_resolve_ast(sink.get(), db) != SEPOL_OK) {
+    log_error(CIL_LOG_TARGET, "CIL AST validation failed during resolution");
+    return false;
+  }
+
+  log_info(CIL_LOG_TARGET, "CIL AST validation completed successfully");
+  return true;
+}
+
 bool CilPolicyImpl::write(rust::Str path) noexcept {
   std::string path_str(path.data(), path.size());
   return write(path_str.c_str());

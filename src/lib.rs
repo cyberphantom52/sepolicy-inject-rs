@@ -108,6 +108,7 @@ mod ffi {
 
         fn add_file(self: Pin<&mut CilPolicyImpl>, source: &str) -> bool;
         fn write(self: Pin<&mut CilPolicyImpl>, path: &str) -> bool;
+        fn validate(self: Pin<&mut CilPolicyImpl>) -> bool;
         fn compile(self: Pin<&mut CilPolicyImpl>) -> UniquePtr<SePolicyImpl>;
 
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
