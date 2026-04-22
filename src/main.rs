@@ -7,18 +7,8 @@ use tracing::{debug, error, info};
 
 #[derive(Subcommand)]
 enum Source {
-    Cil {
-        #[arg(
-            long,
-            value_name = "FILE",
-            num_args = 1,
-            action = clap::ArgAction::Append
-        )]
-        split: Vec<PathBuf>,
-
-        #[command(subcommand)]
-        command: Option<CilCommand>,
-    },
+    #[command(flatten)]
+    Cil(CilSourceCommand),
     Precompiled {
         #[arg(long, value_name = "FILE")]
         policy: PathBuf,
@@ -41,7 +31,31 @@ enum Source {
 }
 
 #[derive(Subcommand)]
-enum CilCommand {
+enum CilSourceCommand {
+    Cil {
+        #[arg(value_name = ".cil")]
+        source: PathBuf,
+
+        #[command(subcommand)]
+        command: Option<SingleCilCommand>,
+    },
+
+    SplitCil {
+        #[arg(
+            long,
+            value_name = ".cil",
+            num_args = 1,
+            action = clap::ArgAction::Append
+        )]
+        source: Vec<PathBuf>,
+
+        #[command(subcommand)]
+        command: Option<CilCompileCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CilCompileCommand {
     /// Compile CIL into a binary policy, then optionally act on it
     Compile {
         /// Optionally save the compiled binary policy to disk
@@ -51,6 +65,12 @@ enum CilCommand {
         #[command(subcommand)]
         command: Option<SepolCommand>,
     },
+}
+
+#[derive(Subcommand)]
+enum SingleCilCommand {
+    #[command(flatten)]
+    Compile(CilCompileCommand),
 
     #[command(flatten)]
     Shared(Commands),
@@ -127,31 +147,34 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.source {
-        Source::Cil { split, command } => {
-            let (output, inner_command) = match command {
-                Some(CilCommand::Compile { output, command }) => (output, command),
-                Some(CilCommand::Shared(_)) => {
-                    error!("Direct CIL operations not implemented yet");
+        Source::Cil(cil_source) => match cil_source {
+            CilSourceCommand::Cil { source, command } => {
+                let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
+                    error!("Failed to compile CIL policy");
                     return ExitCode::FAILURE;
-                }
-                None => (None, None),
-            };
+                };
 
-            let Ok(mut policy) = CilPolicy::compile_split(split.iter()) else {
-                error!("Failed to compile CIL policy");
-                return ExitCode::FAILURE;
-            };
+                let cil_command = match command {
+                    Some(SingleCilCommand::Compile(cmd)) => Some(cmd),
+                    Some(SingleCilCommand::Shared(_)) => {
+                        error!("Direct CIL operations not implemented yet");
+                        return ExitCode::FAILURE;
+                    }
+                    None => None,
+                };
 
-            if let Some(out_path) = output {
-                if !policy.write(&out_path.to_string_lossy()) {
-                    error!(path = %out_path.display(), "Failed to write compiled policy");
-                    return ExitCode::FAILURE;
-                }
-                info!(path = %out_path.display(), "Wrote compiled policy to file");
+                handle_cil_compile_command(cil_command, &mut policy)
             }
 
-            handle_sepol_command(inner_command, &mut policy)
-        }
+            CilSourceCommand::SplitCil { source, command } => {
+                let Ok(mut policy) = CilPolicy::compile_split(source.iter()) else {
+                    error!("Failed to compile split CIL policy");
+                    return ExitCode::FAILURE;
+                };
+
+                handle_cil_compile_command(command, &mut policy)
+            }
+        },
 
         Source::Precompiled { policy, command } => {
             let Some(mut policy) = SePolicy::from_file(policy) else {
@@ -164,7 +187,7 @@ fn main() -> ExitCode {
         #[cfg(target_os = "android")]
         Source::LoadSplit { command } => {
             let Some(mut policy) = SePolicy::from_split() else {
-                error!("");
+                error!("Failed to load split policy");
                 return ExitCode::FAILURE;
             };
             handle_sepol_command(command, &mut policy)
@@ -179,6 +202,27 @@ fn main() -> ExitCode {
             handle_sepol_command(command, &mut policy)
         }
     }
+}
+
+fn handle_cil_compile_command(
+    command: Option<CilCompileCommand>,
+    policy: &mut SePolicy,
+) -> ExitCode {
+    // default: compile with no output, no further command
+    let (output, inner_command) = match command {
+        Some(CilCompileCommand::Compile { output, command }) => (output, command),
+        None => (None, None),
+    };
+
+    if let Some(out_path) = output {
+        if !policy.write(&out_path.to_string_lossy()) {
+            error!(path = %out_path.display(), "Failed to write compiled policy");
+            return ExitCode::FAILURE;
+        }
+        info!(path = %out_path.display(), "Wrote compiled policy to file");
+    }
+
+    handle_sepol_command(inner_command, policy)
 }
 
 fn handle_sepol_command(command: Option<SepolCommand>, policy: &mut SePolicy) -> ExitCode {
