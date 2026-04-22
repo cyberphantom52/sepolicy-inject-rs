@@ -191,7 +191,7 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   for (const char *file : CIL_FILES) {
     const char *actual_file = file;
     if (strchr(file, '%')) {
-      sprintf(path, file, plat_ver);
+      snprintf(path, sizeof(path), file, plat_ver);
       actual_file = path;
     }
     if (access(actual_file, R_OK) == 0) {
