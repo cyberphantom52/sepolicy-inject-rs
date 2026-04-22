@@ -70,60 +70,6 @@ impl SePolicy {
         out
     }
 
-    /// Load and apply rules from a .te file
-    ///
-    /// # Arguments
-    /// * `path` - Path to the .te file
-    /// * `macro_paths` - Paths to M4 macro definition files (can be empty)
-    pub fn load_rules_from_file<P, I>(
-        &mut self,
-        path: impl AsRef<Path>,
-        macro_paths: I,
-    ) -> Result<(), String>
-    where
-        P: AsRef<Path>,
-        I: IntoIterator<Item = P>,
-    {
-        use m4rs::processor::{Expander, MacroRegistry};
-
-        let path_display = path.as_ref().display().to_string();
-        info!(path = %path_display, "Loading rules from .te file");
-
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            error!(path = %path_display, error = %e, "Failed to read file");
-            format!("Failed to read file: {}", e)
-        })?;
-
-        // Load macro definitions
-        let mut registry = MacroRegistry::new();
-        for macro_path in macro_paths {
-            let macro_path_str = macro_path
-                .as_ref()
-                .to_str()
-                .ok_or("Macro path contains invalid UTF-8")?;
-            debug!(macro_path = %macro_path_str, "Loading macro file");
-            registry.load_file(macro_path_str).map_err(|e| {
-                error!(macro_path = %macro_path_str, error = %e, "Failed to load macro file");
-                format!("Failed to load macro file: {}", e)
-            })?;
-        }
-
-        // Expand macros
-        let mut expander = Expander::new(registry);
-        let expanded = expander.expand(&content).map_err(|e| {
-            error!(path = %path_display, error = %e, "M4 expansion failed");
-            format!("M4 expansion failed: {}", e)
-        })?;
-
-        let policy = parser::parse(&expanded).map_err(|e| {
-            error!(path = %path_display, error = %e, "Parse error");
-            format!("Parse error: {}", e)
-        })?;
-        self.apply_policy(&policy);
-        info!(path = %path_display, "Successfully loaded rules from .te file");
-        Ok(())
-    }
-
     /// Apply a parsed policy to this sepolicy
     pub fn apply_policy(&mut self, policy: &Policy) {
         debug!(

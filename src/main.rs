@@ -1,8 +1,9 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sepolicy::{CilPolicy, SePolicy, log};
-use std::path::PathBuf;
+use sepolicy::parser::ast::Policy;
+use sepolicy::{CilPolicy, SePolicy, log, parser};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[derive(Subcommand)]
 enum Source {
@@ -204,7 +205,7 @@ fn handle_sepol_command(command: Option<SepolCommand>, policy: &mut SePolicy) ->
     ExitCode::SUCCESS
 }
 
-fn handle_command(command: Commands, policy: &mut SePolicy) -> ExitCode {
+fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
     match command {
         Commands::Patch {
             policies,
@@ -212,15 +213,15 @@ fn handle_command(command: Commands, policy: &mut SePolicy) -> ExitCode {
             destination,
         } => {
             for te_path in &policies {
-                if let Err(e) = policy.load_rules_from_file(te_path, &macros) {
-                    error!(path = %te_path.display(), error = %e, "Error applying policy file");
+                let Ok(policy) = prepare_patch(te_path, &macros) else {
                     return ExitCode::FAILURE;
-                }
+                };
+                sepolicy.apply_policy(&policy);
             }
             info!(count = policies.len(), "Successfully patched policy");
 
             if let Some(file) = destination.output {
-                if !policy.write(&file.to_string_lossy()) {
+                if !sepolicy.write(&file.to_string_lossy()) {
                     error!(path = %file.display(), "Failed to write patched policy");
                     return ExitCode::FAILURE;
                 }
@@ -229,7 +230,7 @@ fn handle_command(command: Commands, policy: &mut SePolicy) -> ExitCode {
 
             #[cfg(target_os = "android")]
             if destination.live_patch {
-                if !policy.write("/sys/fs/selinux/load") {
+                if !sepolicy.write("/sys/fs/selinux/load") {
                     error!("Failed to load patched policy into kernel");
                     return ExitCode::FAILURE;
                 }
@@ -239,6 +240,47 @@ fn handle_command(command: Commands, policy: &mut SePolicy) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+pub fn prepare_patch<P, I>(path: P, macros: I) -> Result<Policy, String>
+where
+    P: AsRef<Path>,
+    I: IntoIterator<Item = P>,
+{
+    use m4rs::processor::{Expander, MacroRegistry};
+
+    let path_display = path.as_ref().display().to_string();
+
+    let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+        error!(path = %path_display, error = %e, "Failed to read file");
+        format!("Failed to read file: {}", e)
+    })?;
+
+    // Load macro definitions
+    let mut registry = MacroRegistry::new();
+    for macro_path in macros {
+        let macro_path_str = macro_path
+            .as_ref()
+            .to_str()
+            .ok_or("Macro path contains invalid UTF-8")?;
+        debug!(macro_path = %macro_path_str, "Loading macro file");
+        registry.load_file(macro_path_str).map_err(|e| {
+            error!(macro_path = %macro_path_str, error = %e, "Failed to load macro file");
+            format!("Failed to load macro file: {}", e)
+        })?;
+    }
+
+    // Expand macros
+    let mut expander = Expander::new(registry);
+    let expanded = expander.expand(&content).map_err(|e| {
+        error!(path = %path_display, error = %e, "M4 expansion failed");
+        format!("M4 expansion failed: {}", e)
+    })?;
+
+    parser::parse(&expanded).map_err(|e| {
+        error!(path = %path_display, error = %e, "Parse error");
+        format!("Parse error: {}", e)
+    })
 }
 
 fn print_summary(policy: &mut SePolicy) {
