@@ -15,8 +15,36 @@ impl CilPolicy {
 
     /// Create a new CIL policy seeded from a single file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
-        let source = std::fs::read_to_string(path.as_ref())?;
-        Self::new().add_file(&source)
+        Self::from_files(std::iter::once(path))
+    }
+
+    /// Create a new CIL policy seeded from an ordered list of files.
+    ///
+    /// Files are loaded in the exact order they are yielded by the iterator.
+    /// This is useful for validation where a patched single-file CIL needs
+    /// extra context from other CIL files.
+    pub fn from_files<P, I>(paths: I) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        P: AsRef<Path>,
+        I: IntoIterator<Item = P>,
+    {
+        let mut policy = Self::new();
+
+        for path in paths {
+            let source = std::fs::read_to_string(path.as_ref())?;
+            policy = policy.add_file(&source)?;
+        }
+
+        Ok(policy)
+    }
+
+    /// Validate the loaded CIL database by building and resolving its AST.
+    pub fn validate(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.inner.pin_mut().validate() {
+            return Err("failed to validate CIL policy".into());
+        }
+
+        Ok(())
     }
 
     /// Compile the loaded CIL database into a [`SePolicy`].
@@ -67,6 +95,17 @@ impl CilPolicy {
         Ok(())
     }
 
+    /// Validate an ordered list of CIL files by building and resolving their
+    /// combined AST.
+    pub fn validate_files<P, I>(paths: I) -> Result<(), Box<dyn std::error::Error>>
+    where
+        P: AsRef<Path>,
+        I: IntoIterator<Item = P>,
+    {
+        let mut policy = Self::from_files(paths)?;
+        policy.validate()
+    }
+
     /// Compile an ordered list of CIL files directly into a [`SePolicy`].
     ///
     /// Files are added to the underlying CIL database in the exact order they
@@ -76,13 +115,7 @@ impl CilPolicy {
         P: AsRef<Path>,
         I: IntoIterator<Item = P>,
     {
-        let mut policy = Self::new();
-
-        for path in paths {
-            let source = std::fs::read_to_string(path.as_ref())?;
-            policy = policy.add_file(&source)?;
-        }
-
+        let mut policy = Self::from_files(paths)?;
         policy.compile()
     }
 }
