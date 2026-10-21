@@ -217,7 +217,10 @@ mod tests {
         let mut policy = CilPolicy::from_file(&source)
             .expect("failed to load base CIL fixture")
             .add_policy(&patch)
-            .expect("failed to apply TE patch to CIL");
+            .expect("failed to apply TE patch to CIL")
+            // Retain the attribute so the compiler does not optimize away the mapping under test.
+            .add_file("(expandtypeattribute (cil_patch_recompile_attr) false)")
+            .expect("failed to retain test attribute");
 
         policy
             .write(output.path())
@@ -231,7 +234,7 @@ mod tests {
             types.iter().any(|line| {
                 line.contains("cil_patch_recompile_t") && line.contains("cil_patch_recompile_attr")
             }),
-            "recompiled policy should contain the patched type and attribute mapping"
+            "recompiled policy should contain the patched type and attribute mapping: {types:?}"
         );
 
         let avtabs = compiled.avtabs();
