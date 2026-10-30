@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use sepolicy::parser::ast::Policy;
-use sepolicy::{CilPolicy, SePolicy, log, parser};
+use sepolicy::{CilPolicy, SePolicy, parser};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use tracing::{error, info};
@@ -150,8 +150,42 @@ enum RuleType {
     Genfs,
 }
 
+/// Initialize the tracing subscriber based on the target platform.
+///
+/// On Android (when compiled with `--features android`), this uses `tracing-android`
+/// to output logs to logcat.
+///
+/// On other platforms, this uses `tracing-subscriber` with an environment filter
+/// (controllable via the `RUST_LOG` environment variable).
+fn init_subscriber() {
+    use tracing_subscriber::{prelude::*, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    #[cfg(feature = "android")]
+    {
+        let android_layer = tracing_android::layer("sepolicy-inject-rs")
+            .expect("Failed to create Android tracing layer");
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(android_layer)
+            .init();
+    }
+
+    #[cfg(not(feature = "android"))]
+    {
+        use tracing_subscriber::fmt;
+
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt::layer().with_target(true))
+            .init();
+    }
+}
+
 fn main() -> ExitCode {
-    log::init_subscriber();
+    init_subscriber();
 
     let cli = Cli::parse();
 
