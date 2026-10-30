@@ -122,31 +122,31 @@ bool CilPolicyImpl::validate() noexcept {
   return true;
 }
 
-bool CilPolicyImpl::write(rust::Str path) noexcept {
-  std::string path_str(path.data(), path.size());
-  return write(path_str.c_str());
-}
+bool CilPolicyImpl::to_cil(rust::String &out) const noexcept {
+  log_debug(CIL_LOG_TARGET, "Rendering merged CIL AST");
 
-bool CilPolicyImpl::write(const char *path) noexcept {
-  log_info(CIL_LOG_TARGET, std::string("Writing merged CIL AST to: ") + path);
-
-  auto out = open_file(path, "w");
-  if (!out) {
-    log_error(CIL_LOG_TARGET,
-              std::string("Failed to open output file for writing: ") + path);
+  char *buf = nullptr;
+  size_t size = 0;
+  std::FILE *fp = open_memstream(&buf, &size);
+  if (!fp) {
+    log_error(CIL_LOG_TARGET, "Failed to create memory buffer for CIL output");
     return false;
   }
 
   auto db = build_db();
-  if (!db || cil_write_build_ast(out->get(), db.get()) != SEPOL_OK) {
-    log_error(CIL_LOG_TARGET,
-              std::string("Failed to write merged CIL AST: ") + path);
-    return false;
-  }
+  bool ok = db && cil_write_build_ast(fp, db.get()) == SEPOL_OK;
+  // buf and size are only valid once the stream is closed.
+  std::fclose(fp);
 
-  log_info(CIL_LOG_TARGET,
-           std::string("Successfully wrote merged CIL AST: ") + path);
-  return true;
+  if (ok) {
+    out = rust::String::lossy(buf, size);
+    log_debug(CIL_LOG_TARGET, "Rendered merged CIL AST (" +
+                                  std::to_string(size) + " bytes)");
+  } else {
+    log_error(CIL_LOG_TARGET, "Failed to render merged CIL AST");
+  }
+  std::free(buf);
+  return ok;
 }
 
 void CilPolicyImpl::set_policy_version(int version) noexcept {
