@@ -1,3 +1,5 @@
 type macro_src_t;
 type macro_tgt_t;
 allow_read(macro_src_t, macro_tgt_t)
+type macro_other_t;
+allow_read(macro_src_t, { macro_tgt_t macro_other_t })
