@@ -16,6 +16,10 @@
 //! lock for every call that reaches libsepol, including dropping a binary
 //! policy (`policydb_destroy`). C++ log callbacks run while it is held, so a
 //! tracing subscriber must not call back into this crate.
+//!
+//! The one unlocked path is resolving names while iterating the
+//! [`rules`](crate::rules) views: those calls only read the policy's own name
+//! tables and run no libsepol code.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

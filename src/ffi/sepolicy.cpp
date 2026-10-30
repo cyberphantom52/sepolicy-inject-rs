@@ -2,7 +2,7 @@
 #include "sepolicy-inject-rs/src/lib.rs.h"
 #include <sepol/policydb/ebitmap.h>
 #include <sepol/policydb/policydb.h>
-#include <sstream>
+#include <algorithm>
 #include <vector>
 
 static std::string to_string(rust::Str str) {
@@ -46,29 +46,41 @@ static void ffi_log_error(const std::string &msg) {
   log_error(LOG_TARGET, msg);
 }
 
+static size_t class_perm_vec_size(const class_datum_t *clz) {
+  size_t n = clz->permissions.nprim;
+  if (clz->comdatum)
+    n = std::max(n, size_t(clz->comdatum->permissions.nprim));
+  return n;
+}
+
+SePolicyImpl::SePolicyImpl(policydb *db) : db(db) {
+  perm_names.resize(db->p_classes.nprim);
+  for (uint32_t value = 1; value <= db->p_classes.nprim; ++value) {
+    auto clz = db->class_val_to_struct[value - 1];
+    if (!clz)
+      continue;
+
+    auto &names = perm_names[value - 1];
+    names.assign(class_perm_vec_size(clz), nullptr);
+    auto collect = [&](hashtab_t tab) {
+      for_each_hashtab(tab, [&](hashtab_ptr_t node) {
+        auto perm = static_cast<perm_datum *>(node->datum);
+        if (!perm)
+          return;
+        size_t idx = perm->s.value - 1;
+        if (idx < names.size())
+          names[idx] = node->key;
+      });
+    };
+    collect(clz->permissions.table);
+    if (clz->comdatum)
+      collect(clz->comdatum->permissions.table);
+  }
+}
+
 SePolicyImpl::~SePolicyImpl() {
   policydb_destroy(db);
   free(db);
-}
-
-std::optional<std::string> SePolicyImpl::type_name(uint32_t v) const {
-  // v is a 1-based SELinux type value (0 is invalid).
-  // libsepol stores names in a 0-based array indexed by (v - 1),
-  // and valid values are in the range [1, p_types.nprim].
-  if (v < 1 || v > db->p_types.nprim)
-    return std::nullopt;
-  const char *name = db->p_type_val_to_name[v - 1];
-  return name ? std::optional(name) : std::nullopt;
-}
-
-std::optional<std::string> SePolicyImpl::class_name(uint32_t v) const {
-  // v is a 1-based SELinux class value (0 is invalid).
-  // class names are stored in a 0-based array indexed by (v - 1),
-  // with valid values in the range [1, p_classes.nprim].
-  if (v < 1 || v > db->p_classes.nprim)
-    return std::nullopt;
-  const char *name = db->p_class_val_to_name[v - 1];
-  return name ? std::optional(name) : std::nullopt;
 }
 
 type_datum_t *SePolicyImpl::type_datum(uint32_t v) const {
@@ -210,294 +222,177 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   return result;
 }
 
-rust::Vec<rust::String> SePolicyImpl::attributes() const noexcept {
-  rust::Vec<rust::String> out;
-
-  for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
-    auto type = static_cast<type_datum_t *>(node->datum);
-    if (type->flavor != TYPE_ATTRIB)
-      return;
-
-    if (auto name = type_name(type->s.value)) {
-      out.push_back(rust::String(std::string("attribute ") + *name));
-    }
-  });
-
-  return out;
+static rust::Slice<const uint8_t> name_bytes(const char *name) {
+  if (name == nullptr)
+    return {};
+  return {reinterpret_cast<const uint8_t *>(name), std::strlen(name)};
 }
 
-rust::Vec<rust::String> SePolicyImpl::types() const noexcept {
-  rust::Vec<rust::String> out;
+rust::Slice<const uint8_t>
+SePolicyImpl::type_name_bytes(uint32_t value) const noexcept {
+  if (value < 1 || value > db->p_types.nprim)
+    return {};
+  return name_bytes(db->p_type_val_to_name[value - 1]);
+}
 
+rust::Slice<const uint8_t>
+SePolicyImpl::class_name_bytes(uint32_t value) const noexcept {
+  if (value < 1 || value > db->p_classes.nprim)
+    return {};
+  return name_bytes(db->p_class_val_to_name[value - 1]);
+}
+
+rust::Slice<const uint8_t>
+SePolicyImpl::perm_name_bytes(uint32_t class_value,
+                              uint32_t bit) const noexcept {
+  if (class_value < 1 || class_value > perm_names.size())
+    return {};
+  auto &names = perm_names[class_value - 1];
+  if (bit >= names.size())
+    return {};
+  return name_bytes(names[bit]);
+}
+
+void SePolicyImpl::attribute_entries(rust::Vec<uint32_t> &out) const noexcept {
+  for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
+    auto type = static_cast<type_datum_t *>(node->datum);
+    if (type && type->flavor == TYPE_ATTRIB)
+      out.push_back(type->s.value);
+  });
+}
+
+void SePolicyImpl::type_entries(rust::Vec<TypeEntry> &out,
+                                rust::Vec<uint32_t> &attrs) const noexcept {
   for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
     auto type = static_cast<type_datum_t *>(node->datum);
     if (!type || type->flavor != TYPE_TYPE)
       return;
 
-    auto name = type_name(type->s.value);
-    if (!name)
-      return;
-
-    ebitmap_t *bitmap = &db->type_attr_map[type->s.value - 1];
-
-    bool first = true;
-    std::ostringstream stream;
+    TypeEntry entry;
+    entry.value = type->s.value;
+    entry.permissive = ebitmap_get_bit(&db->permissive_map, type->s.value);
+    entry.attrs_start = attrs.size();
 
     ebitmap_node_t *n;
     uint32_t bit;
-    ebitmap_for_each_positive_bit(bitmap, n, bit) {
-      uint32_t type_val = bit + 1;
-
-      auto attr_type = type_datum(type_val);
-      if (!attr_type || attr_type->flavor != TYPE_ATTRIB)
-        continue;
-
-      if (auto attr = type_name(type_val)) {
-        if (first) {
-          stream << "type " << name.value() << " {";
-          first = false;
-        }
-        stream << " " << attr.value();
-      }
+    ebitmap_for_each_positive_bit(&db->type_attr_map[type->s.value - 1], n,
+                                  bit) {
+      uint32_t attr_val = bit + 1;
+      auto attr = type_datum(attr_val);
+      if (attr && attr->flavor == TYPE_ATTRIB)
+        attrs.push_back(attr_val);
     }
 
-    if (!first) {
-      stream << " }";
-      out.push_back(rust::String(stream.str()));
-    }
-
-    // permissive
-    if (ebitmap_get_bit(&db->permissive_map, type->s.value)) {
-      out.push_back(rust::String(std::string("permissive ") + name.value()));
-    }
+    entry.attrs_len = attrs.size() - entry.attrs_start;
+    out.push_back(entry);
   });
-
-  return out;
 }
 
-static size_t class_perm_vec_size(const class_datum_t *clz) {
-  size_t n = clz->permissions.nprim;
-  if (clz->comdatum)
-    n = std::max(n, size_t(clz->comdatum->permissions.nprim));
-  return n;
-}
-
-void SePolicyImpl::emit_av_rule(const avtab_ptr_t node,
-                                rust::Vec<rust::String> &out) const {
-  auto source = this->type_name(node->key.source_type);
-  auto target = this->type_name(node->key.target_type);
-  auto class_ = this->class_name(node->key.target_class);
-  uint16_t class_val = node->key.target_class;
-  if (!source || !target || !class_)
-    return;
-
-  auto rule = specified_to_name(node->key.specified);
-  if (!rule)
-    return;
-
-  uint32_t data = node->key.specified == AVTAB_AUDITDENY ? ~(node->datum.data)
-                                                         : node->datum.data;
-
-  auto clz = this->class_datum(class_val);
-  if (clz == nullptr)
-    return;
-
-  auto [it, inserted] = this->class_perm_cache.try_emplace(class_val);
-  if (inserted) {
-    size_t size = class_perm_vec_size(clz);
-    auto &vec = it->second;
-    vec.assign(size, nullptr);
-
-    auto collect = [&](hashtab_t tab) {
-      for_each_hashtab(tab, [&](hashtab_ptr_t pnode) {
-        auto perm = static_cast<perm_datum *>(pnode->datum);
-        if (!perm)
-          return;
-
-        size_t idx = perm->s.value - 1;
-        if (idx < vec.size())
-          vec[idx] = pnode->key;
-      });
-    };
-
-    collect(clz->permissions.table);
-    if (clz->comdatum)
-      collect(clz->comdatum->permissions.table);
-  }
-
-  std::ostringstream ss;
-  bool first = true;
-  while (data) {
-    uint32_t bit = __builtin_ctz(data);
-    data &= data - 1;
-
-    if (bit >= it->second.size())
-      continue;
-
-    const char *perm = it->second[bit];
-    if (!perm)
-      continue;
-
-    if (first) {
-      ss << rule.value() << " " << source.value() << " " << target.value()
-         << " " << class_.value() << " {";
-      first = false;
-    }
-    ss << " " << perm;
-  }
-
-  if (!first) {
-    ss << " }";
-    out.push_back(rust::String(ss.str()));
+// Exact `specified` values only, as libsepol never sets AVTAB_ENABLED in
+// te_avtab.
+static std::optional<AvtabKind> avtab_kind(uint16_t specified) {
+  switch (specified) {
+  case AVTAB_ALLOWED:
+    return AvtabKind::Allow;
+  case AVTAB_AUDITALLOW:
+    return AvtabKind::AuditAllow;
+  case AVTAB_AUDITDENY:
+    return AvtabKind::DontAudit;
+  case AVTAB_TRANSITION:
+    return AvtabKind::TypeTransition;
+  case AVTAB_MEMBER:
+    return AvtabKind::TypeMember;
+  case AVTAB_CHANGE:
+    return AvtabKind::TypeChange;
+  case AVTAB_XPERMS_ALLOWED:
+    return AvtabKind::AllowXperm;
+  case AVTAB_XPERMS_AUDITALLOW:
+    return AvtabKind::AuditAllowXperm;
+  case AVTAB_XPERMS_DONTAUDIT:
+    return AvtabKind::DontAuditXperm;
+  default:
+    return std::nullopt;
   }
 }
 
-void SePolicyImpl::emit_type_rule(const avtab_ptr_t node,
-                                  rust::Vec<rust::String> &out) const {
-  auto source = this->type_name(node->key.source_type);
-  auto target = this->type_name(node->key.target_type);
-  auto class_ = this->class_name(node->key.target_class);
-  if (!source || !target || !class_)
-    return;
-
-  auto rule = specified_to_name(node->key.specified);
-  if (!rule)
-    return;
-
-  auto def = this->type_name(node->datum.data);
-  if (!def)
-    return;
-
-  std::ostringstream ss;
-  ss << rule.value() << " " << source.value() << " " << target.value() << " "
-     << class_.value() << " " << def.value();
-
-  out.push_back(rust::String(ss.str()));
-}
-
-void SePolicyImpl::emit_xperm_rule(const avtab_ptr_t node,
-                                   rust::Vec<rust::String> &out) const {
-  auto source = this->type_name(node->key.source_type);
-  auto target = this->type_name(node->key.target_type);
-  auto class_ = this->class_name(node->key.target_class);
-  if (!source || !target || !class_)
-    return;
-
-  auto rule = specified_to_name(node->key.specified);
-  if (!rule)
-    return;
-
-  avtab_extended_perms_t *xperms = node->datum.xperms;
-  if (!xperms)
-    return;
-
-  std::vector<std::pair<uint8_t, uint8_t>> ranges;
-  int low = -1;
-
-  for (int i = 0; i < 256; ++i) {
-    if (xperm_test(i, xperms->perms)) {
-      if (low < 0)
-        low = i;
-      if (i == 255)
-        ranges.emplace_back(low, 255);
-    } else if (low >= 0) {
-      ranges.emplace_back(low, i - 1);
-      low = -1;
-    }
-  }
-
-  if (ranges.empty())
-    return;
-
-  auto encode = [&](uint8_t v) -> uint16_t {
-    return xperms->specified == AVTAB_XPERMS_IOCTLFUNCTION
-               ? (uint16_t(xperms->driver) << 8) | v
-               : uint16_t(v) << 8;
-  };
-
-  std::ostringstream ss;
-  ss << rule.value() << " " << source.value() << " " << target.value() << " "
-     << class_.value() << " ioctl {";
-
-  for (auto &[lo8, hi8] : ranges) {
-    uint16_t lo = encode(lo8);
-    uint16_t hi = encode(hi8);
-
-    ss << " 0x" << std::hex << std::uppercase << lo;
-    if (lo != hi)
-      ss << "-0x" << hi;
-  }
-
-  ss << " }";
-  out.push_back(rust::String(ss.str()));
-}
-
-rust::Vec<rust::String> SePolicyImpl::avtabs() const noexcept {
-  rust::Vec<rust::String> out;
+void SePolicyImpl::avtab_entries(rust::Vec<AvtabEntry> &out,
+                                 rust::Vec<XpermEntry> &xperms) const noexcept {
+  out.reserve(db->te_avtab.nel);
 
   for_each_avtab(&db->te_avtab, [&](avtab_ptr_t node) {
-    if (node->key.specified & AVTAB_AV) {
-      emit_av_rule(node, out);
-    } else if (node->key.specified & AVTAB_TYPE) {
-      emit_type_rule(node, out);
-    } else if (node->key.specified & AVTAB_XPERMS) {
-      emit_xperm_rule(node, out);
-    }
-  });
+    auto kind = avtab_kind(node->key.specified);
+    if (!kind)
+      return;
 
-  return out;
+    AvtabEntry entry;
+    entry.kind = *kind;
+    entry.source = node->key.source_type;
+    entry.target = node->key.target_type;
+    entry.class_ = node->key.target_class;
+    entry.data = node->datum.data;
+    entry.xperm = UINT32_MAX;
+
+    // An auditdeny datum stores the permissions that are audited; dontaudit
+    // lists the complement.
+    if (*kind == AvtabKind::DontAudit)
+      entry.data = ~entry.data;
+
+    if (node->key.specified & AVTAB_XPERMS) {
+      auto xp = node->datum.xperms;
+      if (!xp)
+        return;
+
+      XpermEntry x;
+      x.function = xp->specified == AVTAB_XPERMS_IOCTLFUNCTION;
+      x.driver = xp->driver;
+      std::copy(std::begin(xp->perms), std::end(xp->perms), x.perms.begin());
+      entry.xperm = xperms.size();
+      xperms.push_back(x);
+    }
+
+    out.push_back(entry);
+  });
 }
 
-rust::Vec<rust::String> SePolicyImpl::transitions() const noexcept {
-  rust::Vec<rust::String> out;
-
+void SePolicyImpl::filename_trans_entries(
+    rust::Vec<FilenameTransEntry> &out) const noexcept {
   for_each_hashtab(db->filename_trans, [&](hashtab_ptr_t node) {
     auto key = reinterpret_cast<filename_trans_key_t *>(node->key);
     auto trans = static_cast<filename_trans_datum *>(node->datum);
-
-    auto target = type_name(key->ttype);
-    auto class_ = class_name(key->tclass);
-    auto def = type_name(trans->otype);
-    if (!target || !class_ || !def || key->name == nullptr)
+    if (key->name == nullptr)
       return;
 
     ebitmap_node_t *n;
     uint32_t bit;
     ebitmap_for_each_positive_bit(&trans->stypes, n, bit) {
-      uint32_t src_val = bit + 1;
-
-      if (auto src = type_name(src_val)) {
-        std::ostringstream stream;
-        stream << "type_transition " << src.value() << " " << target.value()
-               << " " << class_.value() << " " << def.value() << " "
-               << key->name;
-        out.push_back(rust::String(stream.str()));
-      }
+      FilenameTransEntry entry;
+      entry.source = bit + 1;
+      entry.target = key->ttype;
+      entry.class_ = key->tclass;
+      entry.default_type = trans->otype;
+      entry.name = name_bytes(key->name);
+      out.push_back(entry);
     }
   });
-
-  return out;
 }
 
-rust::Vec<rust::String> SePolicyImpl::genfs_contexts() const noexcept {
-  rust::Vec<rust::String> out;
-
+void SePolicyImpl::genfs_entries(rust::Vec<GenfsEntry> &out) const noexcept {
   for_each_list(db->genfs, [&](genfs_t *genfs) {
     for_each_list(genfs->head, [&](ocontext *context) {
       char *raw_ptr = nullptr;
       size_t len = 0;
       if (context_to_string(nullptr, db, &context->context[0], &raw_ptr,
-                            &len) == 0) {
-        std::unique_ptr<char, decltype(&free)> ctx(raw_ptr, &free);
-        std::ostringstream stream;
-        stream << "genfscon " << genfs->fstype << " " << context->u.name << " "
-               << ctx.get();
-        out.push_back(rust::String(stream.str()));
-      }
+                            &len) != 0)
+        return;
+
+      std::unique_ptr<char, decltype(&free)> ctx(raw_ptr, &free);
+      GenfsEntry entry;
+      entry.fs = name_bytes(genfs->fstype);
+      entry.path = name_bytes(context->u.name);
+      entry.context = rust::String::lossy(ctx.get());
+      out.push_back(std::move(entry));
     });
   });
-
-  return out;
 }
 
 bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,

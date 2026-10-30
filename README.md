@@ -162,10 +162,16 @@ policy.load_rules_from_file(
     ["global_macros.m4", "te_macros.m4"]
 ).expect("Failed to apply rules");
 
-// Query the policy
+// Query the policy as text
 let avtabs = policy.avtabs();
 let types = policy.types();
 let attributes = policy.attributes();
+
+// Or as structured rules that borrow names from the policy instead of
+// formatting every line
+let can_fork = policy
+    .av_rules()
+    .any(|rule| rule.source == "my_domain_t" && rule.perms().any(|p| p == "fork"));
 
 // Apply rules programmatically
 policy.allow(

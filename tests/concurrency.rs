@@ -124,10 +124,10 @@ fn test_concurrent_sepolicy_patch_query_write() {
     let data = std::fs::read(fixture_path("precompiled_sepolicy"))
         .expect("failed to read precompiled sepolicy");
 
-    // Each cycle loads, formats and reloads a full Android policy (~200 ms in
-    // debug builds), so keep the count low: this drives every locked SePolicy
-    // path from several threads rather than hunting for a rare interleaving.
-    run_concurrently(2, |thread, iteration| {
+    // Each cycle loads, queries, writes and reloads a full Android policy, so
+    // keep the count low: this drives every locked SePolicy path from several
+    // threads rather than hunting for a rare interleaving.
+    run_concurrently(4, |thread, iteration| {
         let name = format!("sepol_concurrent_{thread}_{iteration}");
         let patch = parser::parse(&format!(
             "type {name}_t;\nallow {name}_t {name}_t:process fork;"
@@ -137,12 +137,12 @@ fn test_concurrent_sepolicy_patch_query_write() {
 
         let mut policy = SePolicy::from_data(&data).expect("failed to load sepolicy");
         policy.apply_policy(&patch);
+        let source = format!("{name}_t");
         assert!(
             policy
-                .avtabs()
-                .iter()
-                .any(|rule| rule.starts_with(&format!("allow {name}_t {name}_t process"))),
-            "patched rule missing from avtabs"
+                .av_rules()
+                .any(|rule| rule.source == source && rule.class == "process"),
+            "patched rule missing from av_rules"
         );
 
         policy
