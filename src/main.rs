@@ -159,18 +159,24 @@ fn main() -> ExitCode {
         Source::Cil(cil_source) => match cil_source {
             CilSourceCommand::Cil { source, command } => match command {
                 Some(SingleCilCommand::Compile(cmd)) => {
-                    let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
-                        error!("Failed to compile CIL policy");
-                        return ExitCode::FAILURE;
+                    let mut policy = match CilPolicy::compile_split(std::iter::once(source)) {
+                        Ok(policy) => policy,
+                        Err(e) => {
+                            error!(error = %e, "Failed to compile CIL policy");
+                            return ExitCode::FAILURE;
+                        }
                     };
 
                     handle_cil_compile_command(Some(cmd), &mut policy)
                 }
                 Some(SingleCilCommand::Shared(cmd)) => handle_single_cil_command(&source, cmd),
                 None => {
-                    let Ok(mut policy) = CilPolicy::compile_split(std::iter::once(source)) else {
-                        error!("Failed to compile CIL policy");
-                        return ExitCode::FAILURE;
+                    let mut policy = match CilPolicy::compile_split(std::iter::once(source)) {
+                        Ok(policy) => policy,
+                        Err(e) => {
+                            error!(error = %e, "Failed to compile CIL policy");
+                            return ExitCode::FAILURE;
+                        }
                     };
 
                     handle_cil_compile_command(None, &mut policy)
@@ -178,9 +184,12 @@ fn main() -> ExitCode {
             },
 
             CilSourceCommand::SplitCil { source, command } => {
-                let Ok(mut policy) = CilPolicy::compile_split(source.iter()) else {
-                    error!("Failed to compile split CIL policy");
-                    return ExitCode::FAILURE;
+                let mut policy = match CilPolicy::compile_split(source.iter()) {
+                    Ok(policy) => policy,
+                    Err(e) => {
+                        error!(error = %e, "Failed to compile split CIL policy");
+                        return ExitCode::FAILURE;
+                    }
                 };
 
                 handle_cil_compile_command(command, &mut policy)
@@ -188,27 +197,36 @@ fn main() -> ExitCode {
         },
 
         Source::Precompiled { policy, command } => {
-            let Some(mut policy) = SePolicy::from_file(policy) else {
-                error!("Failed to load precompiled policy");
-                return ExitCode::FAILURE;
+            let mut policy = match SePolicy::from_file(policy) {
+                Ok(policy) => policy,
+                Err(e) => {
+                    error!(error = %e, "Failed to load precompiled policy");
+                    return ExitCode::FAILURE;
+                }
             };
             handle_sepol_command(command, &mut policy)
         }
 
         #[cfg(target_os = "android")]
         Source::LoadSplit { command } => {
-            let Some(mut policy) = SePolicy::from_split() else {
-                error!("Failed to load split policy");
-                return ExitCode::FAILURE;
+            let mut policy = match SePolicy::from_split() {
+                Ok(policy) => policy,
+                Err(e) => {
+                    error!(error = %e, "Failed to load split policy");
+                    return ExitCode::FAILURE;
+                }
             };
             handle_sepol_command(command, &mut policy)
         }
 
         #[cfg(target_os = "android")]
         Source::LiveLoad { command } => {
-            let Some(mut policy) = SePolicy::from_file("/sys/fs/selinux/policy") else {
-                error!("Failed to load live policy");
-                return ExitCode::FAILURE;
+            let mut policy = match SePolicy::from_file("/sys/fs/selinux/policy") {
+                Ok(policy) => policy,
+                Err(e) => {
+                    error!(error = %e, "Failed to load live policy");
+                    return ExitCode::FAILURE;
+                }
             };
             handle_sepol_command(command, &mut policy)
         }
@@ -226,8 +244,8 @@ fn handle_cil_compile_command(
     };
 
     if let Some(out_path) = output {
-        if !policy.write(&out_path.to_string_lossy()) {
-            error!(path = %out_path.display(), "Failed to write compiled policy");
+        if let Err(e) = policy.write(&out_path) {
+            error!(path = %out_path.display(), error = %e, "Failed to write compiled policy");
             return ExitCode::FAILURE;
         }
         info!(path = %out_path.display(), "Wrote compiled policy to file");
@@ -277,8 +295,8 @@ fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
             info!(count = policies.len(), "Successfully patched policy");
 
             if let Some(file) = destination.output {
-                if !sepolicy.write(&file.to_string_lossy()) {
-                    error!(path = %file.display(), "Failed to write patched policy");
+                if let Err(e) = sepolicy.write(&file) {
+                    error!(path = %file.display(), error = %e, "Failed to write patched policy");
                     return ExitCode::FAILURE;
                 }
                 info!(path = %file.display(), "Wrote patched policy to file");
@@ -286,8 +304,8 @@ fn handle_command(command: Commands, sepolicy: &mut SePolicy) -> ExitCode {
 
             #[cfg(target_os = "android")]
             if destination.live_patch {
-                if !sepolicy.write("/sys/fs/selinux/load") {
-                    error!("Failed to load patched policy into kernel");
+                if let Err(e) = sepolicy.write("/sys/fs/selinux/load") {
+                    error!(error = %e, "Failed to load patched policy into kernel");
                     return ExitCode::FAILURE;
                 }
                 info!("Successfully loaded patched policy into kernel");
@@ -400,13 +418,16 @@ fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
                     return ExitCode::FAILURE;
                 };
 
-                let Ok(policy) = cil_policy.compile() else {
-                    error!("Failed to compile patched CIL policy");
-                    return ExitCode::FAILURE;
+                let policy = match cil_policy.compile() {
+                    Ok(policy) => policy,
+                    Err(e) => {
+                        error!(error = %e, "Failed to compile patched CIL policy");
+                        return ExitCode::FAILURE;
+                    }
                 };
 
-                if !policy.write("/sys/fs/selinux/load") {
-                    error!("Failed to load patched CIL policy into kernel");
+                if let Err(e) = policy.write("/sys/fs/selinux/load") {
+                    error!(error = %e, "Failed to load patched CIL policy into kernel");
                     return ExitCode::FAILURE;
                 }
                 info!("Successfully loaded patched CIL policy into kernel");

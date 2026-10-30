@@ -1,8 +1,10 @@
 mod cil;
+mod error;
 pub mod log;
 pub mod parser;
 mod policy;
 
+pub use error::{Error, Result};
 pub use ffi::{CilPolicy, SePolicy};
 
 // Re-export log functions for FFI bridge
@@ -88,7 +90,8 @@ mod ffi {
         fn transitions(self: &SePolicy) -> Vec<String>;
         fn genfs_contexts(self: &SePolicy) -> Vec<String>;
 
-        fn write(self: &SePolicy, path: &str) -> bool;
+        #[cxx_name = "write"]
+        fn write_impl(self: &SePolicy, path: &str) -> bool;
 
         fn from_file_impl(path: &str) -> UniquePtr<SePolicyImpl>;
         fn from_split_impl() -> UniquePtr<SePolicyImpl>;

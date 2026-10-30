@@ -1,61 +1,69 @@
 use std::path::Path;
 
+use crate::error::{Error, Result, path_str};
 use crate::ffi::{self, SePolicy};
 use crate::parser::{self, ast::*};
 use tracing::{debug, error, info, warn};
 
 impl SePolicy {
     /// Load policy from a file
-    pub fn from_file(path: impl AsRef<Path>) -> Option<Self> {
-        let path_str = path
-            .as_ref()
-            .to_str()
-            .expect("path contains invalid UTF-8 characters");
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let path_str = path_str(path)?;
         info!(path = %path_str, "Loading policy from file");
         let inner = ffi::from_file_impl(path_str);
         if inner.is_null() {
             error!(path = %path_str, "Failed to load policy from file");
-            None
+            Err(Error::LoadPolicy(path.to_path_buf()))
         } else {
             info!(path = %path_str, "Successfully loaded policy from file");
-            Some(SePolicy { inner })
+            Ok(SePolicy { inner })
         }
     }
 
-    pub fn from_split() -> Option<Self> {
+    pub fn from_split() -> Result<Self> {
         info!("Loading policy from split (precompiled)");
         let inner = ffi::from_split_impl();
         if inner.is_null() {
             error!("Failed to load policy from split");
-            None
+            Err(Error::LoadSplit)
         } else {
             info!("Successfully loaded policy from split");
-            Some(SePolicy { inner })
+            Ok(SePolicy { inner })
         }
     }
 
-    pub fn compile_split() -> Option<Self> {
+    pub fn compile_split() -> Result<Self> {
         info!("Compiling policy from split CIL files");
         let inner = ffi::compile_split_impl();
         if inner.is_null() {
             error!("Failed to compile policy from split");
-            None
+            Err(Error::CompileSplit)
         } else {
             info!("Successfully compiled policy from split");
-            Some(SePolicy { inner })
+            Ok(SePolicy { inner })
         }
     }
 
-    pub fn from_data(data: &[u8]) -> Option<Self> {
+    pub fn from_data(data: &[u8]) -> Result<Self> {
         info!(size = data.len(), "Loading policy from memory");
         let inner = ffi::from_data_impl(data);
         if inner.is_null() {
             error!(size = data.len(), "Failed to load policy from memory");
-            None
+            Err(Error::LoadPolicyData)
         } else {
             info!(size = data.len(), "Successfully loaded policy from memory");
-            Some(SePolicy { inner })
+            Ok(SePolicy { inner })
         }
+    }
+
+    /// Serialize the binary policy to a file
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if !self.write_impl(path_str(path)?) {
+            return Err(Error::WritePolicy(path.to_path_buf()));
+        }
+        Ok(())
     }
 
     pub fn rules(&self) -> Vec<String> {
