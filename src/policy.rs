@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::{Error, Result, path_str};
 use crate::ffi::{self, SePolicy};
-use crate::parser::{self, ast::*};
+use crate::parser::ast::*;
 use tracing::{debug, error, info, warn};
 
 impl SePolicy {
@@ -76,6 +76,19 @@ impl SePolicy {
         out.extend(self.genfs_contexts());
 
         out
+    }
+
+    /// Parse a `.te` file, expanding M4 macros from `macros`, and apply it
+    #[cfg(feature = "m4")]
+    pub fn load_rules_from_file<P, M, I>(&mut self, path: P, macros: I) -> Result<()>
+    where
+        P: AsRef<Path>,
+        M: AsRef<Path>,
+        I: IntoIterator<Item = M>,
+    {
+        let policy = crate::parser::parse_file(path, macros)?;
+        self.apply_policy(&policy);
+        Ok(())
     }
 
     /// Apply a parsed policy to this sepolicy
@@ -189,6 +202,7 @@ impl SePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser;
     use std::path::PathBuf;
 
     fn fixture_path(name: &str) -> PathBuf {

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     SePolicy,
-    error::{Error, Result, path_str},
+    error::{Error, Result, path_str, read_to_string},
     ffi::{CilPolicy, cil_new_impl},
     parser::{ToCil, ast::Policy},
 };
@@ -32,11 +32,7 @@ impl CilPolicy {
         let mut policy = Self::new();
 
         for path in paths {
-            let path = path.as_ref();
-            let source = std::fs::read_to_string(path).map_err(|source| Error::Read {
-                path: path.to_path_buf(),
-                source,
-            })?;
+            let source = read_to_string(path.as_ref())?;
             policy = policy.add_file(&source)?;
         }
 

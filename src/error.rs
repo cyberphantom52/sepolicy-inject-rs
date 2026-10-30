@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::parser::ParseError;
+
 /// Errors returned by [`SePolicy`](crate::SePolicy) and [`CilPolicy`](crate::CilPolicy).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("path contains invalid UTF-8: {}", .0.display())]
     InvalidPath(PathBuf),
@@ -46,9 +49,28 @@ pub enum Error {
 
     #[error("rendered policy patch is empty")]
     EmptyPatch,
+
+    #[error(transparent)]
+    Parse(#[from] ParseError),
+
+    #[cfg(feature = "m4")]
+    #[error("failed to load macro file {}: {message}", path.display())]
+    LoadMacros { path: PathBuf, message: String },
+
+    #[cfg(feature = "m4")]
+    #[error("M4 expansion failed: {0}")]
+    MacroExpansion(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Read a file to a string, keeping the path in the error.
+pub(crate) fn read_to_string(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|source| Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })
+}
 
 /// Borrow a path as UTF-8 for the C++ bridge.
 pub(crate) fn path_str(path: &Path) -> Result<&str> {
