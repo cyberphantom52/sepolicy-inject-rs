@@ -18,6 +18,9 @@ int context_to_string(sepol_handle_t *handle, const policydb_t *policydb,
 int policydb_index_decls(sepol_handle_t *handle, policydb_t *p);
 int type_set_expand(type_set_t *set, ebitmap_t *t, policydb_t *p,
                     unsigned char alwaysexpand);
+// Set by policydb_read on an Android M policy; makes later reads parse ioctl
+// rules in that format and makes policydb_write emit it.
+extern unsigned avtab_android_m_compat;
 __END_DECLS
 
 #define ioctl_driver(x) ((x >> 8) & 0xFF)
@@ -47,6 +50,9 @@ class SePolicyImpl {
   // Permission names per class, indexed [class value - 1][bit]. Built once at
   // construction: classes and permissions never change after loading.
   std::vector<std::vector<const char *>> perm_names;
+  // This policy's avtab_android_m_compat state. libsepol keeps it in a
+  // process global, so it is loaded only around this policy's write.
+  bool android_m_compat;
 
   type_datum_t *type_datum(uint32_t v) const;
   class_datum_t *class_datum(uint32_t v) const;
@@ -66,7 +72,7 @@ class SePolicyImpl {
   bool add_typeattribute(rust::Str type, rust::Str attr);
 
 public:
-  explicit SePolicyImpl(policydb *db);
+  explicit SePolicyImpl(policydb *db, bool android_m_compat = false);
   ~SePolicyImpl();
 
   // AVRules

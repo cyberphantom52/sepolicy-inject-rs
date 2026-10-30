@@ -53,7 +53,8 @@ static size_t class_perm_vec_size(const class_datum_t *clz) {
   return n;
 }
 
-SePolicyImpl::SePolicyImpl(policydb *db) : db(db) {
+SePolicyImpl::SePolicyImpl(policydb *db, bool android_m_compat)
+    : db(db), android_m_compat(android_m_compat) {
   perm_names.resize(db->p_classes.nprim);
   for (uint32_t value = 1; value <= db->p_classes.nprim; ++value) {
     auto clz = db->class_val_to_struct[value - 1];
@@ -101,6 +102,22 @@ class_datum_t *SePolicyImpl::class_datum(uint32_t v) const {
   return db->class_val_to_struct[v - 1];
 }
 
+// Read a binary policy, keeping its Android M format flag with the policy
+// rather than in libsepol's process global.
+static std::unique_ptr<SePolicyImpl> read_policydb(policy_file &file) {
+  avtab_android_m_compat = 0;
+  policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
+  bool ok = policydb_init(db) == 0 && policydb_read(db, &file, 0) == 0;
+  bool android_m_compat = avtab_android_m_compat != 0;
+  avtab_android_m_compat = 0;
+
+  if (!ok) {
+    free(db);
+    return nullptr;
+  }
+  return std::make_unique<SePolicyImpl>(db, android_m_compat);
+}
+
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
   std::string path = to_string(file);
 
@@ -117,15 +134,14 @@ std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str file) noexcept {
   policy_file.fp = file_opt->get();
   policy_file.type = PF_USE_STDIO;
 
-  policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
-  if (policydb_init(db) || policydb_read(db, &policy_file, 0)) {
+  auto impl = read_policydb(policy_file);
+  if (!impl) {
     ffi_log_error("Failed to read policy database from file: " + path);
-    free(db);
     return nullptr;
   }
 
   ffi_log_info("Successfully loaded policy from file: " + path);
-  return std::make_unique<SePolicyImpl>(db);
+  return impl;
 }
 
 std::unique_ptr<SePolicyImpl>
@@ -139,15 +155,14 @@ from_data_impl(rust::Slice<const uint8_t> data) noexcept {
   policy_file.len = data.size();
   policy_file.type = PF_USE_MEMORY;
 
-  policydb *db = static_cast<policydb *>(malloc(sizeof(policydb_t)));
-  if (policydb_init(db) || policydb_read(db, &policy_file, 0)) {
+  auto impl = read_policydb(policy_file);
+  if (!impl) {
     ffi_log_error("Failed to read policy database from memory");
-    free(db);
     return nullptr;
   }
 
   ffi_log_info("Successfully loaded policy from memory");
-  return std::make_unique<SePolicyImpl>(db);
+  return impl;
 }
 
 std::unique_ptr<SePolicyImpl> from_split_impl() noexcept {
@@ -891,7 +906,9 @@ bool SePolicyImpl::write(rust::Str path) const noexcept {
   pf.type = PF_USE_STDIO;
   pf.fp = fp;
 
+  avtab_android_m_compat = android_m_compat;
   int write_result = policydb_write(this->db, &pf);
+  avtab_android_m_compat = 0;
   fclose(fp);
 
   if (write_result != 0) {
