@@ -15,9 +15,9 @@ path = "src/lib.rs"
 [dependencies]
 clap = { version = "4.5.53", optional = true, features = ["derive", "string"] }
 cxx = "1.0.205"
-pest = "2.8.4"
-pest_derive = "2.8.4"
-thiserror = "2.0.17"
+pest = "2.9.5"
+pest_derive = "2.9.5"
+thiserror = "2.0.21"
 m4rs = { optional = true, git = "https://github.com/cyberphantom52/m4rs.git", rev = "eafda1d50f5bb2d3f51984f15bb19c6063bc0388" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
