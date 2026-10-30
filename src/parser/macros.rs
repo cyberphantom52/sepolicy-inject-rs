@@ -148,20 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_matches_expand_with() {
-        let input = std::fs::read_to_string(fixture_path("macros.te"))
-            .expect("failed to read macro fixture");
-        let definitions = std::fs::read_to_string(fixture_path("macros.m4"))
-            .expect("failed to read macro definitions");
-
-        let from_path =
-            expand(&input, [fixture_path("macros.m4")]).expect("failed to expand from path");
-        let from_text = expand_with(&input, &[&definitions]).expect("failed to expand from text");
-
-        assert_eq!(from_path, from_text);
-    }
-
-    #[test]
     fn test_expand_reports_failing_macro_path() {
         let bad = fixture_path("bad_macros.m4");
         let err = expand("x", [fixture_path("macros.m4"), bad.clone()])

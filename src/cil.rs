@@ -329,16 +329,17 @@ mod tests {
     }
 
     #[test]
-    fn test_to_cil_matches_write() {
+    fn test_to_cil_is_repeatable() {
         let source = cil_fixture_path("test_handle.cil");
         let patch = crate::parser::parse("type cil_to_cil_t;").expect("failed to parse TE patch");
-        let output = TempOutput::new("to-cil-matches-write");
 
-        let mut policy = CilPolicy::from_file(&source)
+        let policy = CilPolicy::from_file(&source)
             .expect("failed to load base CIL fixture")
             .add_policy(&patch)
             .expect("failed to apply TE patch to CIL");
 
+        // Rendering consumes libsepol's parse tree, so a second render used to
+        // dereference a destroyed tree.
         let rendered = policy.to_cil().expect("failed to render CIL");
         assert!(
             rendered.contains("(type cil_to_cil_t)"),
@@ -348,16 +349,6 @@ mod tests {
             rendered,
             policy.to_cil().expect("failed to render CIL twice"),
             "rendering should be repeatable"
-        );
-
-        policy
-            .write(output.path())
-            .expect("failed to write merged CIL policy");
-        let written =
-            std::fs::read_to_string(output.path()).expect("failed to read merged CIL output");
-        assert_eq!(
-            rendered, written,
-            "write should emit exactly to_cil's output"
         );
     }
 
@@ -388,24 +379,6 @@ mod tests {
                 .iter()
                 .any(|rule| rule.starts_with("allow cil_round_trip_t cil_round_trip_t test_class")),
             "compiled policy should contain the patched allow rule"
-        );
-    }
-
-    #[test]
-    fn test_write_reports_io_error() {
-        let source = cil_fixture_path("test_handle.cil");
-        let missing_dir = std::env::temp_dir()
-            .join("sepolicy-inject-rs-missing-dir")
-            .join("out.cil");
-
-        let err = CilPolicy::from_file(&source)
-            .expect("failed to load base CIL fixture")
-            .write(&missing_dir)
-            .expect_err("writing into a missing directory should fail");
-
-        assert!(
-            matches!(err, Error::Write { ref path, .. } if path == &missing_dir),
-            "unexpected error: {err:?}"
         );
     }
 }

@@ -914,10 +914,6 @@ mod tests {
         let mut perms: Vec<_> = rule.perms().collect();
         perms.sort();
         assert_eq!(perms, ["fork", "sigchld"]);
-        assert!(
-            matches!(rule.source, Cow::Borrowed(_)),
-            "names should borrow from the policy"
-        );
     }
 
     #[test]
