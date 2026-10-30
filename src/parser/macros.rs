@@ -18,7 +18,7 @@ pub fn expand_with(input: &str, macros: &[&str]) -> Result<String> {
     for (index, source) in macros.iter().enumerate() {
         registry
             .load(source)
-            .map_err(|message| Error::MacroDefinitions { index, message })?;
+            .map_err(|source| Error::MacroDefinitions { index, source })?;
     }
 
     let mut expander = Expander::new(registry);
@@ -47,9 +47,9 @@ where
     let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
 
     expand_with(input, &sources).map_err(|err| match err {
-        Error::MacroDefinitions { index, message } => Error::LoadMacros {
+        Error::MacroDefinitions { index, source } => Error::LoadMacros {
             path: paths[index].as_ref().to_path_buf(),
-            message,
+            source,
         },
         err => err,
     })
