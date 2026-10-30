@@ -239,4 +239,49 @@ mod tests {
             "recompiled policy should contain the patched allow rule"
         );
     }
+
+    #[test]
+    fn test_operations_are_repeatable_on_one_policy() {
+        let source = cil_fixture_path("test_handle.cil");
+        let patch = crate::parser::parse(
+            "type cil_repeat_t;\nallow cil_repeat_t self:test_class test_perm;",
+        )
+        .expect("failed to parse TE patch");
+        let output = TempOutput::new("repeatable-operations");
+
+        // validate, write and compile each consume libsepol's parse tree, so
+        // every step after the first used to dereference a destroyed tree.
+        let mut policy = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .add_policy(&patch)
+            .expect("failed to apply TE patch to CIL");
+
+        policy.validate().expect("first validate failed");
+        policy
+            .write(output.path())
+            .expect("write after validate failed");
+
+        let mut policy = policy
+            .add_file("(type cil_repeat_extra_t)\n(roletype object_r cil_repeat_extra_t)")
+            .expect("add_file after write failed");
+        policy.validate().expect("validate after add_file failed");
+
+        for _ in 0..2 {
+            let compiled = policy.compile().expect("compile failed");
+            assert!(
+                compiled
+                    .avtabs()
+                    .iter()
+                    .any(|rule| rule.starts_with("allow cil_repeat_t cil_repeat_t test_class")),
+                "compiled policy should contain the patched allow rule"
+            );
+        }
+
+        let written =
+            std::fs::read_to_string(output.path()).expect("failed to read merged CIL output");
+        assert!(
+            written.contains("(type cil_repeat_t)"),
+            "merged CIL output should contain the patched type"
+        );
+    }
 }

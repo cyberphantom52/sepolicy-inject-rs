@@ -36,22 +36,40 @@ static void setup_cil_logging() {
   });
 }
 
-CilPolicyImpl::CilPolicyImpl() : db(nullptr) {
-  setup_cil_logging();
-  cil_db_init(&db);
-  cil_set_mls(db, 1);
-  cil_set_multiple_decls(db, 1);
-  cil_set_disable_neverallow(db, 1);
-  cil_set_target_platform(db, SEPOL_TARGET_SELINUX);
-  cil_set_attrs_expand_generated(db, 1);
+CilPolicyImpl::CilPolicyImpl() { setup_cil_logging(); }
+
+unique_cil_db CilPolicyImpl::new_db() const noexcept {
+  cil_db_t *raw = nullptr;
+  cil_db_init(&raw);
+  unique_cil_db db(raw);
+
+  cil_set_mls(db.get(), 1);
+  cil_set_multiple_decls(db.get(), 1);
+  cil_set_disable_neverallow(db.get(), 1);
+  cil_set_target_platform(db.get(), SEPOL_TARGET_SELINUX);
+  cil_set_attrs_expand_generated(db.get(), 1);
+  if (policy_version) {
+    cil_set_policy_version(db.get(), *policy_version);
+  }
+  return db;
+}
+
+// Fresh database with every source added so far, or null if one fails to parse.
+unique_cil_db CilPolicyImpl::build_db() const noexcept {
+  auto db = new_db();
+  for (const auto &[name, source] : sources) {
+    if (cil_add_file(db.get(), name.c_str(), source.data(), source.size()) !=
+        SEPOL_OK) {
+      log_error(CIL_LOG_TARGET,
+                std::string("Failed to parse CIL source: ") + name);
+      return nullptr;
+    }
+  }
+  return db;
 }
 
 std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept {
   return std::make_unique<CilPolicyImpl>();
-}
-
-CilPolicyImpl::~CilPolicyImpl() {
-  cil_db_destroy(&db);
 }
 
 bool CilPolicyImpl::add_file(rust::Str source) noexcept {
@@ -69,15 +87,18 @@ bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
     return false;
   }
 
-  if (cil_add_file(db, name.c_str(), source, size) != SEPOL_OK) {
+  // Parse into a scratch database so syntax errors surface here rather than
+  // at the next validate, write or compile.
+  auto db = new_db();
+  if (cil_add_file(db.get(), name.c_str(), source, size) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET,
               std::string("Failed to parse CIL source: ") + name);
     return false;
   }
-
   log_debug(CIL_LOG_TARGET,
             std::string("Successfully loaded in-memory CIL source: ") + name +
                 " (" + std::to_string(size) + " bytes)");
+  sources.emplace_back(std::move(name), std::string(source, size));
   return true;
 }
 
@@ -91,7 +112,8 @@ bool CilPolicyImpl::validate() noexcept {
     return false;
   }
 
-  if (cil_write_resolve_ast(sink.get(), db) != SEPOL_OK) {
+  auto db = build_db();
+  if (!db || cil_write_resolve_ast(sink.get(), db.get()) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET, "CIL AST validation failed during resolution");
     return false;
   }
@@ -115,7 +137,8 @@ bool CilPolicyImpl::write(const char *path) noexcept {
     return false;
   }
 
-  if (cil_write_build_ast(out->get(), db) != SEPOL_OK) {
+  auto db = build_db();
+  if (!db || cil_write_build_ast(out->get(), db.get()) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET,
               std::string("Failed to write merged CIL AST: ") + path);
     return false;
@@ -127,20 +150,22 @@ bool CilPolicyImpl::write(const char *path) noexcept {
 }
 
 void CilPolicyImpl::set_policy_version(int version) noexcept {
-  cil_set_policy_version(db, version);
+  policy_version = version;
 }
 
 std::unique_ptr<SePolicyImpl> CilPolicyImpl::compile() noexcept {
   log_info(CIL_LOG_TARGET, "Compiling CIL database...");
 
   sepol_policydb_t *pdb = nullptr;
-  if (cil_compile(db) != SEPOL_OK) {
+  auto db = build_db();
+  if (!db || cil_compile(db.get()) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET, "CIL compilation failed");
     return nullptr;
   }
   log_debug(CIL_LOG_TARGET, "CIL compilation successful, building policydb...");
 
-  if (cil_build_policydb(db, &pdb) != SEPOL_OK) {
+  // The built policydb is independent of the CIL database freed on return.
+  if (cil_build_policydb(db.get(), &pdb) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET, "Failed to build policydb from CIL");
     return nullptr;
   }
