@@ -68,6 +68,10 @@ pub enum Error {
     LoadMacros { path: PathBuf, message: String },
 
     #[cfg(feature = "m4")]
+    #[error("failed to load macro definitions at index {index}: {message}")]
+    MacroDefinitions { index: usize, message: String },
+
+    #[cfg(feature = "m4")]
     #[error("M4 expansion failed: {0}")]
     MacroExpansion(String),
 }
