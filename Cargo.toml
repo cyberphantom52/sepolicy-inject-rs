@@ -14,7 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4.5.53", optional = true, features = ["derive", "string"] }
-cxx = "1.0.192"
+cxx = "1.0.205"
 pest = "2.8.4"
 pest_derive = "2.8.4"
 thiserror = "2.0.17"
@@ -31,8 +31,7 @@ android = ["cli", "dep:tracing-android"]
 
 [build-dependencies]
 cc = "1.2.49"
-cxx-build = "1.0.192"
-cxx-gen = "0.7.192"
+cxx-build = "1.0.205"
 
 [profile.release]
 strip = true
