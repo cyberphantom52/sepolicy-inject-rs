@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::parser::ParseError;
+#[cfg(feature = "m4")]
+use m4rs::error::M4Error;
 
 /// Errors returned by [`SePolicy`](crate::SePolicy) and [`CilPolicy`](crate::CilPolicy).
 #[derive(Debug, Error)]
@@ -64,16 +66,24 @@ pub enum Error {
     Parse(#[from] ParseError),
 
     #[cfg(feature = "m4")]
-    #[error("failed to load macro file {}: {message}", path.display())]
-    LoadMacros { path: PathBuf, message: String },
+    #[error("failed to load macro file {}: {source}", path.display())]
+    LoadMacros {
+        path: PathBuf,
+        #[source]
+        source: M4Error,
+    },
 
     #[cfg(feature = "m4")]
-    #[error("failed to load macro definitions at index {index}: {message}")]
-    MacroDefinitions { index: usize, message: String },
+    #[error("failed to load macro definitions at index {index}: {source}")]
+    MacroDefinitions {
+        index: usize,
+        #[source]
+        source: M4Error,
+    },
 
     #[cfg(feature = "m4")]
     #[error("M4 expansion failed: {0}")]
-    MacroExpansion(String),
+    MacroExpansion(#[source] M4Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
