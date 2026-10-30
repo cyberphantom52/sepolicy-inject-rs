@@ -667,15 +667,21 @@ fn render_context(context: &SecurityContext) -> Option<String> {
     Some(rendered)
 }
 
+/// Render a context's MLS range as a CIL levelrange: `(low high)`. A single
+/// level is both low and high, as checkpolicy reads it; a bare name that is
+/// not a sensitivity is passed through as a named levelrange.
 fn render_context_mls_range(range: &str) -> String {
     let trimmed = range.trim();
 
     if let Some((low, high)) = trimmed.split_once('-') {
         format!(
-            "{} {}",
+            "({} {})",
             render_level_or_name(low.trim()),
             render_level_or_name(high.trim())
         )
+    } else if looks_like_sensitivity(trimmed.split(':').next().unwrap_or_default()) {
+        let level = render_level_or_name(trimmed);
+        format!("({level} {level})")
     } else {
         render_level_or_name(trimmed)
     }
@@ -697,6 +703,7 @@ fn render_level_or_name(level: &str) -> String {
             .split(',')
             .map(str::trim)
             .filter(|entry| !entry.is_empty())
+            .map(render_category)
             .collect::<Vec<_>>()
             .join(" ");
 
@@ -709,6 +716,15 @@ fn render_level_or_name(level: &str) -> String {
         format!("({})", trimmed)
     } else {
         trimmed.to_string()
+    }
+}
+
+/// Render one category entry; checkpolicy's `c0.c1023` range is CIL's
+/// `(range c0 c1023)`.
+fn render_category(entry: &str) -> String {
+    match entry.split_once('.') {
+        Some((low, high)) => format!("(range {} {})", low.trim(), high.trim()),
+        None => entry.to_string(),
     }
 }
 
