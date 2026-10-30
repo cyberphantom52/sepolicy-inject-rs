@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::{
     SePolicy,
+    error::{Error, Result, path_str},
     ffi::{CilPolicy, cil_new_impl},
     parser::{ToCil, ast::Policy},
 };
@@ -14,7 +15,7 @@ impl CilPolicy {
     }
 
     /// Create a new CIL policy seeded from a single file.
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         Self::from_files(std::iter::once(path))
     }
 
@@ -23,7 +24,7 @@ impl CilPolicy {
     /// Files are loaded in the exact order they are yielded by the iterator.
     /// This is useful for validation where a patched single-file CIL needs
     /// extra context from other CIL files.
-    pub fn from_files<P, I>(paths: I) -> Result<Self, Box<dyn std::error::Error>>
+    pub fn from_files<P, I>(paths: I) -> Result<Self>
     where
         P: AsRef<Path>,
         I: IntoIterator<Item = P>,
@@ -31,7 +32,11 @@ impl CilPolicy {
         let mut policy = Self::new();
 
         for path in paths {
-            let source = std::fs::read_to_string(path.as_ref())?;
+            let path = path.as_ref();
+            let source = std::fs::read_to_string(path).map_err(|source| Error::Read {
+                path: path.to_path_buf(),
+                source,
+            })?;
             policy = policy.add_file(&source)?;
         }
 
@@ -39,44 +44,39 @@ impl CilPolicy {
     }
 
     /// Validate the loaded CIL database by building and resolving its AST.
-    pub fn validate(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn validate(&mut self) -> Result<()> {
         if !self.inner.pin_mut().validate() {
-            return Err("failed to validate CIL policy".into());
+            return Err(Error::CilValidate);
         }
 
         Ok(())
     }
 
     /// Compile the loaded CIL database into a [`SePolicy`].
-    pub fn compile(&mut self) -> Result<SePolicy, Box<dyn std::error::Error>> {
+    pub fn compile(&mut self) -> Result<SePolicy> {
         let inner = self.inner.pin_mut().compile();
 
         if inner.is_null() {
-            return Err(format!("failed to compile CIL into a sepolicy").into());
+            return Err(Error::CilCompile);
         }
 
         Ok(SePolicy { inner })
     }
 
     /// Add CIL source text to the policy database.
-    pub fn add_file(mut self, source: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn add_file(mut self, source: &str) -> Result<Self> {
         if !self.inner.pin_mut().add_file(source) {
-            return Err("failed to add CIL source".into());
+            return Err(Error::CilAdd);
         }
         Ok(self)
     }
 
     /// Render a parsed TE policy into CIL and add it to the policy database.
-    pub fn add_policy(self, policy: &Policy) -> Result<Self, Box<dyn std::error::Error>> {
-        let rendered = match policy.to_cil() {
-            Some(rendered) => rendered,
-            None => {
-                return Err("failed to render policy patch into CIL".into());
-            }
-        };
+    pub fn add_policy(self, policy: &Policy) -> Result<Self> {
+        let rendered = policy.to_cil().ok_or(Error::CilRender)?;
 
         if rendered.is_empty() {
-            return Err("rendered policy patch is empty".into());
+            return Err(Error::EmptyPatch);
         }
 
         let source = rendered.join("\n");
@@ -84,20 +84,17 @@ impl CilPolicy {
     }
 
     /// Write the loaded CIL database back out as merged CIL source.
-    pub fn write(&mut self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
-        let path_str = path
-            .as_ref()
-            .to_str()
-            .expect("path contains invalid UTF-8 characters");
-        if !self.inner.pin_mut().write(path_str) {
-            return Err(format!("failed to write CIL file: {}", path.as_ref().display()).into());
+    pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if !self.inner.pin_mut().write(path_str(path)?) {
+            return Err(Error::WritePolicy(path.to_path_buf()));
         }
         Ok(())
     }
 
     /// Validate an ordered list of CIL files by building and resolving their
     /// combined AST.
-    pub fn validate_files<P, I>(paths: I) -> Result<(), Box<dyn std::error::Error>>
+    pub fn validate_files<P, I>(paths: I) -> Result<()>
     where
         P: AsRef<Path>,
         I: IntoIterator<Item = P>,
@@ -110,7 +107,7 @@ impl CilPolicy {
     ///
     /// Files are added to the underlying CIL database in the exact order they
     /// are yielded by the iterator.
-    pub fn compile_split<P, I>(paths: I) -> Result<SePolicy, Box<dyn std::error::Error>>
+    pub fn compile_split<P, I>(paths: I) -> Result<SePolicy>
     where
         P: AsRef<Path>,
         I: IntoIterator<Item = P>,
