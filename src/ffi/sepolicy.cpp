@@ -210,15 +210,15 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
   return result;
 }
 
-rust::Vec<rust::String> SePolicy::attributes() const noexcept {
+rust::Vec<rust::String> SePolicyImpl::attributes() const noexcept {
   rust::Vec<rust::String> out;
 
-  for_each_hashtab(inner->db->p_types.table, [&](hashtab_ptr_t node) {
+  for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
     auto type = static_cast<type_datum_t *>(node->datum);
     if (type->flavor != TYPE_ATTRIB)
       return;
 
-    if (auto name = inner->type_name(type->s.value)) {
+    if (auto name = type_name(type->s.value)) {
       out.push_back(rust::String(std::string("attribute ") + *name));
     }
   });
@@ -226,19 +226,19 @@ rust::Vec<rust::String> SePolicy::attributes() const noexcept {
   return out;
 }
 
-rust::Vec<rust::String> SePolicy::types() const noexcept {
+rust::Vec<rust::String> SePolicyImpl::types() const noexcept {
   rust::Vec<rust::String> out;
 
-  for_each_hashtab(inner->db->p_types.table, [&](hashtab_ptr_t node) {
+  for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
     auto type = static_cast<type_datum_t *>(node->datum);
     if (!type || type->flavor != TYPE_TYPE)
       return;
 
-    auto name = inner->type_name(type->s.value);
+    auto name = type_name(type->s.value);
     if (!name)
       return;
 
-    ebitmap_t *bitmap = &inner->db->type_attr_map[type->s.value - 1];
+    ebitmap_t *bitmap = &db->type_attr_map[type->s.value - 1];
 
     bool first = true;
     std::ostringstream stream;
@@ -248,11 +248,11 @@ rust::Vec<rust::String> SePolicy::types() const noexcept {
     ebitmap_for_each_positive_bit(bitmap, n, bit) {
       uint32_t type_val = bit + 1;
 
-      auto attr_type = inner->type_datum(type_val);
+      auto attr_type = type_datum(type_val);
       if (!attr_type || attr_type->flavor != TYPE_ATTRIB)
         continue;
 
-      if (auto attr = inner->type_name(type_val)) {
+      if (auto attr = type_name(type_val)) {
         if (first) {
           stream << "type " << name.value() << " {";
           first = false;
@@ -267,7 +267,7 @@ rust::Vec<rust::String> SePolicy::types() const noexcept {
     }
 
     // permissive
-    if (ebitmap_get_bit(&inner->db->permissive_map, type->s.value)) {
+    if (ebitmap_get_bit(&db->permissive_map, type->s.value)) {
       out.push_back(rust::String(std::string("permissive ") + name.value()));
     }
   });
@@ -432,32 +432,32 @@ void SePolicyImpl::emit_xperm_rule(const avtab_ptr_t node,
   out.push_back(rust::String(ss.str()));
 }
 
-rust::Vec<rust::String> SePolicy::avtabs() const noexcept {
+rust::Vec<rust::String> SePolicyImpl::avtabs() const noexcept {
   rust::Vec<rust::String> out;
 
-  for_each_avtab(&inner->db->te_avtab, [&](avtab_ptr_t node) {
+  for_each_avtab(&db->te_avtab, [&](avtab_ptr_t node) {
     if (node->key.specified & AVTAB_AV) {
-      inner->emit_av_rule(node, out);
+      emit_av_rule(node, out);
     } else if (node->key.specified & AVTAB_TYPE) {
-      inner->emit_type_rule(node, out);
+      emit_type_rule(node, out);
     } else if (node->key.specified & AVTAB_XPERMS) {
-      inner->emit_xperm_rule(node, out);
+      emit_xperm_rule(node, out);
     }
   });
 
   return out;
 }
 
-rust::Vec<rust::String> SePolicy::transitions() const noexcept {
+rust::Vec<rust::String> SePolicyImpl::transitions() const noexcept {
   rust::Vec<rust::String> out;
 
-  for_each_hashtab(inner->db->filename_trans, [&](hashtab_ptr_t node) {
+  for_each_hashtab(db->filename_trans, [&](hashtab_ptr_t node) {
     auto key = reinterpret_cast<filename_trans_key_t *>(node->key);
     auto trans = static_cast<filename_trans_datum *>(node->datum);
 
-    auto target = inner->type_name(key->ttype);
-    auto class_ = inner->class_name(key->tclass);
-    auto def = inner->type_name(trans->otype);
+    auto target = type_name(key->ttype);
+    auto class_ = class_name(key->tclass);
+    auto def = type_name(trans->otype);
     if (!target || !class_ || !def || key->name == nullptr)
       return;
 
@@ -466,7 +466,7 @@ rust::Vec<rust::String> SePolicy::transitions() const noexcept {
     ebitmap_for_each_positive_bit(&trans->stypes, n, bit) {
       uint32_t src_val = bit + 1;
 
-      if (auto src = inner->type_name(src_val)) {
+      if (auto src = type_name(src_val)) {
         std::ostringstream stream;
         stream << "type_transition " << src.value() << " " << target.value()
                << " " << class_.value() << " " << def.value() << " "
@@ -479,14 +479,14 @@ rust::Vec<rust::String> SePolicy::transitions() const noexcept {
   return out;
 }
 
-rust::Vec<rust::String> SePolicy::genfs_contexts() const noexcept {
+rust::Vec<rust::String> SePolicyImpl::genfs_contexts() const noexcept {
   rust::Vec<rust::String> out;
 
-  for_each_list(inner->db->genfs, [&](genfs_t *genfs) {
+  for_each_list(db->genfs, [&](genfs_t *genfs) {
     for_each_list(genfs->head, [&](ocontext *context) {
       char *raw_ptr = nullptr;
       size_t len = 0;
-      if (context_to_string(nullptr, inner->db, &context->context[0], &raw_ptr,
+      if (context_to_string(nullptr, db, &context->context[0], &raw_ptr,
                             &len) == 0) {
         std::unique_ptr<char, decltype(&free)> ctx(raw_ptr, &free);
         std::ostringstream stream;
@@ -553,39 +553,39 @@ bool SePolicyImpl::add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p,
   return true;
 }
 
-void SePolicy::allow(rust::Slice<rust::Str const> src,
+void SePolicyImpl::allow(rust::Slice<rust::Str const> src,
                      rust::Slice<rust::Str const> tgt,
                      rust::Slice<rust::Str const> cls,
                      rust::Slice<rust::Str const> perm) noexcept {
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
-    inner->add_rule(s, t, c, p, AVTAB_ALLOWED);
+    add_rule(s, t, c, p, AVTAB_ALLOWED);
   });
 }
 
-void SePolicy::deny(rust::Slice<rust::Str const> src,
+void SePolicyImpl::deny(rust::Slice<rust::Str const> src,
                     rust::Slice<rust::Str const> tgt,
                     rust::Slice<rust::Str const> cls,
                     rust::Slice<rust::Str const> perm) noexcept {
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
-    inner->add_rule(s, t, c, p, AVTAB_ALLOWED, true);
+    add_rule(s, t, c, p, AVTAB_ALLOWED, true);
   });
 }
 
-void SePolicy::auditallow(rust::Slice<rust::Str const> src,
+void SePolicyImpl::auditallow(rust::Slice<rust::Str const> src,
                           rust::Slice<rust::Str const> tgt,
                           rust::Slice<rust::Str const> cls,
                           rust::Slice<rust::Str const> perm) noexcept {
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
-    inner->add_rule(s, t, c, p, AVTAB_AUDITALLOW);
+    add_rule(s, t, c, p, AVTAB_AUDITALLOW);
   });
 }
 
-void SePolicy::dontaudit(rust::Slice<rust::Str const> src,
+void SePolicyImpl::dontaudit(rust::Slice<rust::Str const> src,
                          rust::Slice<rust::Str const> tgt,
                          rust::Slice<rust::Str const> cls,
                          rust::Slice<rust::Str const> perm) noexcept {
   for_each_rule(src, tgt, cls, perm, [this](auto s, auto t, auto c, auto p) {
-    inner->add_rule(s, t, c, p, AVTAB_AUDITDENY);
+    add_rule(s, t, c, p, AVTAB_AUDITDENY);
   });
 }
 
@@ -649,30 +649,30 @@ bool SePolicyImpl::add_xperm_rule(rust::Str s, rust::Str t, rust::Str c,
   return true;
 }
 
-void SePolicy::allowxperm(rust::Slice<rust::Str const> src,
+void SePolicyImpl::allowxperm(rust::Slice<rust::Str const> src,
                           rust::Slice<rust::Str const> tgt,
                           rust::Slice<rust::Str const> cls,
                           rust::Slice<XPerm const> xperm) noexcept {
   for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
-    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_ALLOWED);
+    add_xperm_rule(s, t, c, x, AVTAB_XPERMS_ALLOWED);
   });
 }
 
-void SePolicy::auditallowxperm(rust::Slice<rust::Str const> src,
+void SePolicyImpl::auditallowxperm(rust::Slice<rust::Str const> src,
                                rust::Slice<rust::Str const> tgt,
                                rust::Slice<rust::Str const> cls,
                                rust::Slice<XPerm const> xperm) noexcept {
   for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
-    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_AUDITALLOW);
+    add_xperm_rule(s, t, c, x, AVTAB_XPERMS_AUDITALLOW);
   });
 }
 
-void SePolicy::dontauditxperm(rust::Slice<rust::Str const> src,
+void SePolicyImpl::dontauditxperm(rust::Slice<rust::Str const> src,
                               rust::Slice<rust::Str const> tgt,
                               rust::Slice<rust::Str const> cls,
                               rust::Slice<XPerm const> xperm) noexcept {
   for_each_rule(src, tgt, cls, xperm, [this](auto s, auto t, auto c, auto &x) {
-    inner->add_xperm_rule(s, t, c, x, AVTAB_XPERMS_DONTAUDIT);
+    add_xperm_rule(s, t, c, x, AVTAB_XPERMS_DONTAUDIT);
   });
 }
 
@@ -685,15 +685,15 @@ bool SePolicyImpl::set_type_state(rust::Str type_name, bool permissive) {
   return ebitmap_set_bit(&db->permissive_map, type->s.value, permissive) == 0;
 }
 
-void SePolicy::permissive(rust::Slice<rust::Str const> types) noexcept {
+void SePolicyImpl::permissive(rust::Slice<rust::Str const> types) noexcept {
   for (auto t : types) {
-    inner->set_type_state(t, true);
+    set_type_state(t, true);
   }
 }
 
-void SePolicy::enforce(rust::Slice<rust::Str const> types) noexcept {
+void SePolicyImpl::enforce(rust::Slice<rust::Str const> types) noexcept {
   for (auto t : types) {
-    inner->set_type_state(t, false);
+    set_type_state(t, false);
   }
 }
 
@@ -727,11 +727,11 @@ bool SePolicyImpl::add_typeattribute(rust::Str type, rust::Str attr) {
   return true;
 }
 
-void SePolicy::typeattribute(rust::Slice<rust::Str const> ty,
+void SePolicyImpl::typeattribute(rust::Slice<rust::Str const> ty,
                              rust::Slice<rust::Str const> attrs) noexcept {
   for (auto t : ty) {
     for (auto a : attrs) {
-      inner->add_typeattribute(t, a);
+      add_typeattribute(t, a);
     }
   }
 }
@@ -794,17 +794,17 @@ bool SePolicyImpl::add_type(rust::Str type_name, uint32_t flavor) {
   return true;
 }
 
-void SePolicy::type(rust::Str ty, rust::Slice<rust::Str const> attrs) noexcept {
-  if (!inner->add_type(ty, TYPE_TYPE))
+void SePolicyImpl::type(rust::Str ty, rust::Slice<rust::Str const> attrs) noexcept {
+  if (!add_type(ty, TYPE_TYPE))
     return;
 
   for (auto a : attrs) {
-    inner->add_typeattribute(ty, a);
+    add_typeattribute(ty, a);
   }
 }
 
-void SePolicy::attribute(rust::Str name) noexcept {
-  inner->add_type(name, TYPE_ATTRIB);
+void SePolicyImpl::attribute(rust::Str name) noexcept {
+  add_type(name, TYPE_ATTRIB);
 }
 
 // Type rules (type_transition, type_change, type_member)
@@ -896,23 +896,23 @@ bool SePolicyImpl::add_filename_trans(rust::Str s, rust::Str t, rust::Str c,
   return ebitmap_set_bit(&trans->stypes, src->s.value - 1, 1) == 0;
 }
 
-void SePolicy::type_transition(rust::Str src, rust::Str tgt, rust::Str cls,
+void SePolicyImpl::type_transition(rust::Str src, rust::Str tgt, rust::Str cls,
                                rust::Str dest, rust::Str obj) noexcept {
   if (obj.empty()) {
-    inner->add_type_rule(src, tgt, cls, dest, AVTAB_TRANSITION);
+    add_type_rule(src, tgt, cls, dest, AVTAB_TRANSITION);
   } else {
-    inner->add_filename_trans(src, tgt, cls, dest, obj);
+    add_filename_trans(src, tgt, cls, dest, obj);
   }
 }
 
-void SePolicy::type_change(rust::Str src, rust::Str tgt, rust::Str cls,
+void SePolicyImpl::type_change(rust::Str src, rust::Str tgt, rust::Str cls,
                            rust::Str dest) noexcept {
-  inner->add_type_rule(src, tgt, cls, dest, AVTAB_CHANGE);
+  add_type_rule(src, tgt, cls, dest, AVTAB_CHANGE);
 }
 
-void SePolicy::type_member(rust::Str src, rust::Str tgt, rust::Str cls,
+void SePolicyImpl::type_member(rust::Str src, rust::Str tgt, rust::Str cls,
                            rust::Str dest) noexcept {
-  inner->add_type_rule(src, tgt, cls, dest, AVTAB_MEMBER);
+  add_type_rule(src, tgt, cls, dest, AVTAB_MEMBER);
 }
 
 // Genfscon
@@ -951,12 +951,12 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   return true;
 }
 
-void SePolicy::genfscon(rust::Str fs, rust::Str path,
+void SePolicyImpl::genfscon(rust::Str fs, rust::Str path,
                         rust::Str context) noexcept {
-  inner->add_genfscon(fs, path, context);
+  add_genfscon(fs, path, context);
 }
 
-bool SePolicyImpl::write(rust::Str path) {
+bool SePolicyImpl::write(rust::Str path) const noexcept {
   std::string path_str(path.data(), path.size());
 
   // Write policy to memory buffer first
@@ -1008,6 +1008,3 @@ bool SePolicyImpl::write(rust::Str path) {
   return true;
 }
 
-bool SePolicy::write(::rust::Str path) const noexcept {
-    return inner->write(path);
-}

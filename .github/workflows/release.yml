@@ -25,8 +25,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$version"
       - name: Test and build
         run: |
-          # libsepol CIL uses a process-global string pool.
-          cargo +1.93.1 test --locked --features cli -- --test-threads=1
+          cargo +1.93.1 test --locked --features cli
           cargo +1.93.1 build --locked --release --features cli --bin sepolicy-inject-rs
           target/release/sepolicy-inject-rs --help
           target/release/sepolicy-inject-rs cil /tmp/policy.cil patch --help

@@ -42,7 +42,6 @@ class SePolicyImpl {
   policydb *db;
   mutable std::unordered_map<uint32_t, std::vector<const char *>>
       class_perm_cache;
-  friend struct SePolicy;
 
   std::optional<std::string> type_name(uint32_t v) const;
   std::optional<std::string> class_name(uint32_t v) const;
@@ -69,11 +68,62 @@ class SePolicyImpl {
   bool set_type_state(rust::Str type_name, bool permissive);
   bool add_typeattribute(rust::Str type, rust::Str attr);
 
-  bool write(rust::Str path);
-
 public:
   explicit SePolicyImpl(policydb *db) : db(db) {}
   ~SePolicyImpl();
+
+  // AVRules
+  void allow(rust::Slice<rust::Str const> src, rust::Slice<rust::Str const> tgt,
+             rust::Slice<rust::Str const> cls,
+             rust::Slice<rust::Str const> perm) noexcept;
+  void deny(rust::Slice<rust::Str const> src, rust::Slice<rust::Str const> tgt,
+            rust::Slice<rust::Str const> cls,
+            rust::Slice<rust::Str const> perm) noexcept;
+  void auditallow(rust::Slice<rust::Str const> src,
+                  rust::Slice<rust::Str const> tgt,
+                  rust::Slice<rust::Str const> cls,
+                  rust::Slice<rust::Str const> perm) noexcept;
+  void dontaudit(rust::Slice<rust::Str const> src,
+                 rust::Slice<rust::Str const> tgt,
+                 rust::Slice<rust::Str const> cls,
+                 rust::Slice<rust::Str const> perm) noexcept;
+
+  // AVXRules
+  void allowxperm(rust::Slice<rust::Str const> src,
+                  rust::Slice<rust::Str const> tgt,
+                  rust::Slice<rust::Str const> cls,
+                  rust::Slice<XPerm const> xperm) noexcept;
+  void auditallowxperm(rust::Slice<rust::Str const> src,
+                       rust::Slice<rust::Str const> tgt,
+                       rust::Slice<rust::Str const> cls,
+                       rust::Slice<XPerm const> xperm) noexcept;
+  void dontauditxperm(rust::Slice<rust::Str const> src,
+                      rust::Slice<rust::Str const> tgt,
+                      rust::Slice<rust::Str const> cls,
+                      rust::Slice<XPerm const> xperm) noexcept;
+
+  void permissive(rust::Slice<rust::Str const> types) noexcept;
+  void enforce(rust::Slice<rust::Str const> types) noexcept;
+  void typeattribute(rust::Slice<rust::Str const> ty,
+                     rust::Slice<rust::Str const> attrs) noexcept;
+  void type(rust::Str ty, rust::Slice<rust::Str const> attrs) noexcept;
+  void attribute(rust::Str name) noexcept;
+
+  void type_transition(rust::Str src, rust::Str tgt, rust::Str cls,
+                       rust::Str dest, rust::Str obj) noexcept;
+  void type_change(rust::Str src, rust::Str tgt, rust::Str cls,
+                   rust::Str dest) noexcept;
+  void type_member(rust::Str src, rust::Str tgt, rust::Str cls,
+                   rust::Str dest) noexcept;
+  void genfscon(rust::Str fs, rust::Str path, rust::Str context) noexcept;
+
+  rust::Vec<rust::String> attributes() const noexcept;
+  rust::Vec<rust::String> types() const noexcept;
+  rust::Vec<rust::String> avtabs() const noexcept;
+  rust::Vec<rust::String> transitions() const noexcept;
+  rust::Vec<rust::String> genfs_contexts() const noexcept;
+
+  bool write(rust::Str path) const noexcept;
 };
 
 std::unique_ptr<SePolicyImpl> from_file_impl(rust::Str path) noexcept;

@@ -24,7 +24,6 @@ using unique_cil_db = std::unique_ptr<cil_db_t, cil_db_deleter>;
 class CilPolicyImpl {
   std::vector<std::pair<std::string, std::string>> sources;
   std::optional<int> policy_version;
-  friend struct CilPolicy;
 
   unique_cil_db new_db() const noexcept;
   unique_cil_db build_db() const noexcept;
