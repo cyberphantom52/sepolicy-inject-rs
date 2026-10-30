@@ -5,7 +5,9 @@ A Rust library and CLI tool for injecting SELinux policy rules into compiled pol
 ## Features
 
 - **Load compiled policies**: Support for monolithic policy files and Android split policies
+- **CIL**: Patch, validate and compile CIL sources, in memory or on disk
 - **Parse and apply `.te` files**: Parse Type Enforcement files and inject rules into loaded policies
+- **Query rules**: Structured rule views that borrow names from the policy instead of formatting text
 - **M4 macro expansion**: Built-in support for M4 macro preprocessing (required for many SELinux policy files)
 - **Live patching**: Load patched policies directly into the running kernel (Android)
 - **CLI and library**: Use as a command-line tool or embed in your Rust projects
@@ -73,62 +75,67 @@ The binaries will be at `target/aarch64-linux-android/release/sepolicy-inject-rs
 
 ### Command Line Interface
 
-#### Load and Print Policy Rules
+Every command starts from a policy source: `precompiled` (a binary policy),
+`cil` (one CIL file) or `split-cil` (an ordered list of CIL files). Without a
+further command, the CLI prints a summary of the loaded policy.
+
+#### Print Policy Rules
 
 ```bash
-# Load a policy and print all rules
-sepolicy-inject-rs --load /path/to/policy print
+# Print all rules
+sepolicy-inject-rs precompiled --policy /path/to/policy print
 
-# Print specific rule types
-sepolicy-inject-rs --load /path/to/policy print avtabs
-sepolicy-inject-rs --load /path/to/policy print types
-sepolicy-inject-rs --load /path/to/policy print attributes
-sepolicy-inject-rs --load /path/to/policy print transitions
-sepolicy-inject-rs --load /path/to/policy print genfs
+# Print one kind: attributes, types, avtabs, transitions or genfs
+sepolicy-inject-rs precompiled --policy /path/to/policy print avtabs
 ```
 
-#### Patch Policy with .te Files
+#### Patch a Binary Policy with .te Files
 
 ```bash
-# Apply a single .te file
-sepolicy-inject-rs --precompiled /path/to/policy patch rules.te
+# Apply .te files (repeat -p for several), expanding M4 macros (repeat -m)
+sepolicy-inject-rs precompiled --policy /path/to/policy \
+  patch -p rules.te -m global_macros.m4 -m te_macros.m4 \
+  --output /path/to/patched_policy
+```
 
-# Apply multiple .te files
-sepolicy-inject-rs --precompiled /path/to/policy patch rules1.te rules2.te
+#### Work with CIL
 
-# Apply with M4 macro definitions
-sepolicy-inject-rs --precompiled /path/to/policy patch rules.te -m global_macros.m4 -m te_macros.m4
+```bash
+# Patch a CIL file and write the merged CIL (without --output it only checks
+# that the patched policy resolves). --resolve-with loads extra CIL files
+# first, for references the patched file does not define itself.
+sepolicy-inject-rs cil vendor_sepolicy.cil \
+  patch -p rules.te --resolve-with plat_sepolicy.cil --output patched.cil
 
-# Save patched policy to a file
-sepolicy-inject-rs --precompiled /path/to/policy patch rules.te --output /path/to/patched_policy
+# Compile CIL to a binary policy, then optionally print or patch it
+sepolicy-inject-rs cil policy.cil compile --output policy.bin print types
+
+# Compile an ordered list of CIL files, in the order given
+sepolicy-inject-rs split-cil \
+  --source plat_sepolicy.cil --source mapping.cil --source vendor_sepolicy.cil \
+  compile --output policy.bin
 ```
 
 #### Android-Specific Usage
 
-On Android devices, `--live-load` is the default source when you do not pass `--precompiled`, `--load-split`, or `--compile-split`.
+Android builds add two sources and live patching:
 
 ```bash
-# Load from the default live policy from `/sys/fs/selinux/policy` and print
-sepolicy-inject-rs print
+# The running kernel policy (/sys/fs/selinux/policy)
+sepolicy-inject-rs live-load print
 
-# Load from precompiled split policy
-sepolicy-inject-rs --load-split print
+# The device's split policy: the precompiled policy when it matches the
+# installed CIL, otherwise compiled from the CIL files
+sepolicy-inject-rs load-split print
 
-# Compile split CIL policies from an explicit ordered file list
-sepolicy-inject-rs \
-  --compile-split=/path/to/plat_sepolicy.cil \
-  --compile-split=/path/to/mapping.cil \
-  --compile-split=/path/to/vendor_sepolicy.cil \
-  print
+# Patch and save to a file
+sepolicy-inject-rs live-load patch -p rules.te -m te_macros.m4 --output /data/local/tmp/patched
 
-# Patch and save to file
-sepolicy-inject-rs patch rules.te -m te_macros.m4 --output /data/local/tmp/patched
-
-# Patch and load directly into kernel
-sepolicy-inject-rs patch rules.te --live-patch
+# Patch and load the result into the kernel
+sepolicy-inject-rs live-load patch -p rules.te --live-patch
 ```
 
-> **Note**: On Android, `--live-load` is the default source when no explicit source option is provided. Repeat `--compile-split=/path/to/file.cil` to provide an ordered list of CIL files. Files are compiled in the order provided. `--compile-split` must be provided at least once with a file. `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
+> **Note**: `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root.
 
 ### Library Usage
 
@@ -228,17 +235,27 @@ cargo test -- --nocapture
 ```
 sepolicy-inject-rs/
 ├── src/
-│   ├── lib.rs          # Main library API
-│   ├── main.rs         # CLI implementation
-│   ├── parser/         # .te file parser
-│   │   ├── parser.rs   # Pest grammar implementation
-│   │   ├── ast.rs      # Abstract Syntax Tree
-│   │   └── policy.pest # Grammar definition
-│   └── ffi/            # C++ FFI bindings
-│       ├── sepolicy.cpp
-│       └── sepolicy.hpp
+│   ├── lib.rs          # Library entry point and C++ bridge declarations
+│   ├── main.rs         # CLI (behind the `cli` feature)
+│   ├── policy.rs       # SePolicy: binary policies
+│   ├── cil.rs          # CilPolicy: CIL sources
+│   ├── rules.rs        # Structured, borrowing rule views
+│   ├── error.rs        # Error type
+│   ├── lock.rs         # Lock serializing libsepol access
+│   ├── log.rs          # Forwards C++ log messages to tracing
+│   ├── parser/         # .te parser
+│   │   ├── policy.pest # Grammar
+│   │   ├── parser.rs   # Grammar to AST
+│   │   ├── ast.rs      # Abstract syntax tree
+│   │   ├── cil.rs      # AST to CIL rendering
+│   │   └── macros.rs   # M4 expansion (behind the `m4` feature)
+│   └── ffi/            # C++ side of the bridge
+│       ├── sepolicy.cpp/.hpp
+│       ├── cil.cpp/.hpp
+│       └── mmap.cpp/.hpp, utils.hpp
 ├── tests/
-│   ├── fixtures/       # Test policy files
+│   ├── fixtures/       # Test policies, .te and .m4 files
+│   ├── concurrency.rs  # Concurrent use from several threads
 │   └── parser_test.rs  # Parser tests
 └── selinux/            # libsepol submodule
 ```
