@@ -18,7 +18,7 @@ A Rust library and CLI tool for injecting SELinux policy rules into compiled pol
 ```bash
 git clone --recurse-submodules https://github.com/cyberphantom52/sepolicy-inject-rs.git
 cd sepolicy-inject-rs
-cargo build --release
+cargo build --release --features cli
 ```
 
 The binary will be at `target/release/sepolicy-inject-rs`.
@@ -49,15 +49,15 @@ export ANDROID_NDK_HOME=/path/to/your/android-ndk
 
 # Build for arm64-v8a (most common)
 # Use -P to specify Android platform version
-cargo ndk -t arm64-v8a -P 30 build --release
+cargo ndk -t arm64-v8a -P 30 build --release --features cli
 
 # Build for other architectures
-cargo ndk -t armeabi-v7a -P 30 build --release
-cargo ndk -t x86_64 -P 30 build --release
-cargo ndk -t x86 -P 30 build --release
+cargo ndk -t armeabi-v7a -P 30 build --release --features cli
+cargo ndk -t x86_64 -P 30 build --release --features cli
+cargo ndk -t x86 -P 30 build --release --features cli
 
 # Build for all architectures
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -P 30 build --release
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -P 30 build --release --features cli
 ```
 
 The binaries will be at `target/aarch64-linux-android/release/sepolicy-inject-rs` (or corresponding path for other architectures).
@@ -131,6 +131,23 @@ sepolicy-inject-rs patch rules.te --live-patch
 > **Note**: On Android, `--live-load` is the default source when no explicit source option is provided. Repeat `--compile-split=/path/to/file.cil` to provide an ordered list of CIL files. Files are compiled in the order provided. `--compile-split` must be provided at least once with a file. `--live-patch` writes the patched policy to `/sys/fs/selinux/load`, which requires root privileges.
 
 ### Library Usage
+
+Add the crate as a git dependency; it is imported as `sepolicy`. The CLI-only
+dependencies (`clap`, `tracing-subscriber`) sit behind the `cli` feature, so
+the library pulls in only what it needs.
+
+```toml
+[dependencies]
+sepolicy-inject-rs = { git = "https://github.com/cyberphantom52/sepolicy-inject-rs.git" }
+```
+
+| Feature   | Default | Description                                                      |
+|-----------|---------|------------------------------------------------------------------|
+| `m4`      | yes     | M4 macro expansion (`parser::parse_file`, `load_rules_from_file`) |
+| `cli`     | no      | Builds the `sepolicy-inject-rs` binary                            |
+| `android` | no      | `cli` plus logcat logging via `tracing-android`                   |
+
+The library emits `tracing` events but does not install a subscriber.
 
 ```rust
 use sepolicy::SePolicy;
