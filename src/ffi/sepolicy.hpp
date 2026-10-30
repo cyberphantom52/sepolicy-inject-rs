@@ -6,7 +6,6 @@
 
 #include <sepol/policydb/policydb.h>
 #include <string>
-#include <unordered_map>
 
 // libsepol internal APIs
 __BEGIN_DECLS
@@ -37,22 +36,20 @@ __END_DECLS
 #define SELINUX_VERSION SELINUX_MNT "/policyvers"
 
 struct XPerm;
+struct AvtabEntry;
+struct XpermEntry;
+struct TypeEntry;
+struct FilenameTransEntry;
+struct GenfsEntry;
 
 class SePolicyImpl {
   policydb *db;
-  mutable std::unordered_map<uint32_t, std::vector<const char *>>
-      class_perm_cache;
+  // Permission names per class, indexed [class value - 1][bit]. Built once at
+  // construction: classes and permissions never change after loading.
+  std::vector<std::vector<const char *>> perm_names;
 
-  std::optional<std::string> type_name(uint32_t v) const;
-  std::optional<std::string> class_name(uint32_t v) const;
   type_datum_t *type_datum(uint32_t v) const;
   class_datum_t *class_datum(uint32_t v) const;
-
-  void emit_av_rule(const avtab_ptr_t node, rust::Vec<rust::String> &out) const;
-  void emit_type_rule(const avtab_ptr_t node,
-                      rust::Vec<rust::String> &out) const;
-  void emit_xperm_rule(const avtab_ptr_t node,
-                       rust::Vec<rust::String> &out) const;
 
   // Rule modification methods
   bool add_rule(rust::Str s, rust::Str t, rust::Str c, rust::Str p, int effect,
@@ -69,7 +66,7 @@ class SePolicyImpl {
   bool add_typeattribute(rust::Str type, rust::Str attr);
 
 public:
-  explicit SePolicyImpl(policydb *db) : db(db) {}
+  explicit SePolicyImpl(policydb *db);
   ~SePolicyImpl();
 
   // AVRules
@@ -117,11 +114,20 @@ public:
                    rust::Str dest) noexcept;
   void genfscon(rust::Str fs, rust::Str path, rust::Str context) noexcept;
 
-  rust::Vec<rust::String> attributes() const noexcept;
-  rust::Vec<rust::String> types() const noexcept;
-  rust::Vec<rust::String> avtabs() const noexcept;
-  rust::Vec<rust::String> transitions() const noexcept;
-  rust::Vec<rust::String> genfs_contexts() const noexcept;
+  // Names borrowed from the policydb; empty if the value has no name.
+  rust::Slice<const uint8_t> type_name_bytes(uint32_t value) const noexcept;
+  rust::Slice<const uint8_t> class_name_bytes(uint32_t value) const noexcept;
+  rust::Slice<const uint8_t> perm_name_bytes(uint32_t class_value,
+                                             uint32_t bit) const noexcept;
+
+  // Bulk extraction of rule records, with names left as values.
+  void attribute_entries(rust::Vec<uint32_t> &out) const noexcept;
+  void type_entries(rust::Vec<TypeEntry> &out,
+                    rust::Vec<uint32_t> &attrs) const noexcept;
+  void avtab_entries(rust::Vec<AvtabEntry> &out,
+                     rust::Vec<XpermEntry> &xperms) const noexcept;
+  void filename_trans_entries(rust::Vec<FilenameTransEntry> &out) const noexcept;
+  void genfs_entries(rust::Vec<GenfsEntry> &out) const noexcept;
 
   bool write(rust::Str path) const noexcept;
 };
@@ -132,28 +138,3 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept;
 std::unique_ptr<SePolicyImpl>
 from_data_impl(rust::Slice<const uint8_t> data) noexcept;
 
-static auto specified_to_name =
-    [](uint32_t spec) -> std::optional<std::string> {
-  switch (spec) {
-  case AVTAB_ALLOWED:
-    return "allow";
-  case AVTAB_AUDITALLOW:
-    return "auditallow";
-  case AVTAB_AUDITDENY:
-    return "dontaudit";
-  case AVTAB_TRANSITION:
-    return "type_transition";
-  case AVTAB_MEMBER:
-    return "type_member";
-  case AVTAB_CHANGE:
-    return "type_change";
-  case AVTAB_XPERMS_ALLOWED:
-    return "allowxperm";
-  case AVTAB_XPERMS_AUDITALLOW:
-    return "auditallowxperm";
-  case AVTAB_XPERMS_DONTAUDIT:
-    return "dontauditxperm";
-  default:
-    return std::nullopt;
-  }
-};

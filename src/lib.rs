@@ -4,6 +4,7 @@ mod lock;
 pub mod log;
 pub mod parser;
 mod policy;
+pub mod rules;
 
 pub use cil::CilPolicy;
 pub use error::{Error, Result};
@@ -28,6 +29,64 @@ mod ffi {
         low: u16,
         high: u16,
         reset: bool,
+    }
+
+    /// Kind of an avtab entry, from its exact `specified` value.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    enum AvtabKind {
+        Allow,
+        AuditAllow,
+        DontAudit,
+        TypeTransition,
+        TypeMember,
+        TypeChange,
+        AllowXperm,
+        AuditAllowXperm,
+        DontAuditXperm,
+    }
+
+    /// An avtab entry. `data` is the permission mask for access vector
+    /// rules (already complemented for dontaudit) and the default type for
+    /// type rules. `xperm` indexes the extended-permission list, or is
+    /// `u32::MAX`.
+    struct AvtabEntry {
+        kind: AvtabKind,
+        source: u32,
+        target: u32,
+        class_: u32,
+        data: u32,
+        xperm: u32,
+    }
+
+    /// Extended permissions of an avtab entry: a 256-bit set of ioctl
+    /// functions within `driver`, or of drivers when `function` is false.
+    struct XpermEntry {
+        function: bool,
+        driver: u8,
+        perms: [u32; 8],
+    }
+
+    /// A type and the range of its attributes in the accompanying list.
+    struct TypeEntry {
+        value: u32,
+        permissive: bool,
+        attrs_start: u32,
+        attrs_len: u32,
+    }
+
+    struct FilenameTransEntry<'a> {
+        source: u32,
+        target: u32,
+        class_: u32,
+        default_type: u32,
+        name: &'a [u8],
+    }
+
+    struct GenfsEntry<'a> {
+        fs: &'a [u8],
+        path: &'a [u8],
+        context: String,
     }
 
     unsafe extern "C++" {
@@ -107,11 +166,24 @@ mod ffi {
         fn type_member(self: Pin<&mut SePolicyImpl>, src: &str, tgt: &str, cls: &str, dest: &str);
         fn genfscon(self: Pin<&mut SePolicyImpl>, fs: &str, path: &str, context: &str);
 
-        fn attributes(self: &SePolicyImpl) -> Vec<String>;
-        fn types(self: &SePolicyImpl) -> Vec<String>;
-        fn avtabs(self: &SePolicyImpl) -> Vec<String>;
-        fn transitions(self: &SePolicyImpl) -> Vec<String>;
-        fn genfs_contexts(self: &SePolicyImpl) -> Vec<String>;
+        // Names borrowed from the policydb; empty if the value has no name.
+        fn type_name_bytes(self: &SePolicyImpl, value: u32) -> &[u8];
+        fn class_name_bytes(self: &SePolicyImpl, value: u32) -> &[u8];
+        fn perm_name_bytes(self: &SePolicyImpl, class_value: u32, bit: u32) -> &[u8];
+
+        // Bulk extraction of rule records, with names left as values.
+        fn attribute_entries(self: &SePolicyImpl, out: &mut Vec<u32>);
+        fn type_entries(self: &SePolicyImpl, out: &mut Vec<TypeEntry>, attrs: &mut Vec<u32>);
+        fn avtab_entries(
+            self: &SePolicyImpl,
+            out: &mut Vec<AvtabEntry>,
+            xperms: &mut Vec<XpermEntry>,
+        );
+        fn filename_trans_entries<'a>(
+            self: &'a SePolicyImpl,
+            out: &mut Vec<FilenameTransEntry<'a>>,
+        );
+        fn genfs_entries<'a>(self: &'a SePolicyImpl, out: &mut Vec<GenfsEntry<'a>>);
 
         fn write(self: &SePolicyImpl, path: &str) -> bool;
 

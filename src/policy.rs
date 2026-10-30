@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 use std::pin::Pin;
 
@@ -7,6 +8,7 @@ use crate::error::{Error, Result, path_str};
 use crate::ffi::{self, SePolicyImpl, XPerm};
 use crate::lock;
 use crate::parser::ast::*;
+use crate::rules::{self, AvRule, AvtabRule, FilenameTransition, Genfs, TypeDecl, XpermRule};
 use tracing::{debug, error, info, warn};
 
 /// A binary SELinux policy database.
@@ -42,9 +44,18 @@ impl SePolicy {
     }
 
     /// Run `f` against the database while holding the libsepol lock.
-    fn with<R>(&self, f: impl FnOnce(&SePolicyImpl) -> R) -> R {
+    fn with<'s, R>(&'s self, f: impl FnOnce(&'s SePolicyImpl) -> R) -> R {
         let _guard = lock::libsepol();
         f(&self.inner)
+    }
+
+    /// The database for resolving names lazily, without the libsepol lock.
+    ///
+    /// Name lookups only read this policy's own name tables and run no
+    /// libsepol code. Holding `&self` rules out concurrent mutation, and
+    /// `SePolicy` is not `Sync`, so no other thread can reach this instance.
+    fn names(&self) -> &SePolicyImpl {
+        &self.inner
     }
 
     /// Run `f` against the mutable database while holding the libsepol lock.
@@ -190,24 +201,134 @@ impl SePolicy {
         self.with_mut(|p| p.genfscon(fs, path, context));
     }
 
+    /// Attribute names, in policy order.
+    pub fn attribute_names(&self) -> impl Iterator<Item = Cow<'_, str>> + '_ {
+        let mut values = Vec::new();
+        self.with(|p| p.attribute_entries(&mut values));
+        let names = self.names();
+        values
+            .into_iter()
+            .filter_map(move |value| rules::name(names.type_name_bytes(value)))
+    }
+
+    /// Types (not attributes) with their attributes and permissive state.
+    pub fn type_decls(&self) -> impl Iterator<Item = TypeDecl<'_>> + '_ {
+        let (mut entries, mut attrs) = (Vec::new(), Vec::new());
+        self.with(|p| p.type_entries(&mut entries, &mut attrs));
+        let names = self.names();
+        entries.into_iter().filter_map(move |entry| {
+            let name = rules::name(names.type_name_bytes(entry.value))?;
+            let start = entry.attrs_start as usize;
+            let attributes = attrs[start..start + entry.attrs_len as usize]
+                .iter()
+                .filter_map(|&attr| rules::name(names.type_name_bytes(attr)))
+                .collect();
+            Some(TypeDecl {
+                name,
+                attributes,
+                permissive: entry.permissive,
+            })
+        })
+    }
+
+    /// Every rule in the access vector table, in table order.
+    pub fn avtab_rules(&self) -> impl Iterator<Item = AvtabRule<'_>> + '_ {
+        let (mut entries, mut xperms) = (Vec::new(), Vec::new());
+        self.with(|p| p.avtab_entries(&mut entries, &mut xperms));
+        let names = self.names();
+        entries
+            .into_iter()
+            .filter_map(move |entry| rules::avtab_rule(names, &entry, &xperms))
+    }
+
+    /// `allow`, `auditallow` and `dontaudit` rules.
+    pub fn av_rules(&self) -> impl Iterator<Item = AvRule<'_>> + '_ {
+        self.avtab_rules().filter_map(|rule| match rule {
+            AvtabRule::Av(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    /// `type_transition`, `type_member` and `type_change` rules.
+    pub fn type_rules(&self) -> impl Iterator<Item = rules::TypeRule<'_>> + '_ {
+        self.avtab_rules().filter_map(|rule| match rule {
+            AvtabRule::Type(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    /// `allowxperm`, `auditallowxperm` and `dontauditxperm` rules.
+    pub fn xperm_rules(&self) -> impl Iterator<Item = XpermRule<'_>> + '_ {
+        self.avtab_rules().filter_map(|rule| match rule {
+            AvtabRule::Xperm(rule) => Some(rule),
+            _ => None,
+        })
+    }
+
+    /// Filename `type_transition` rules.
+    pub fn filename_transitions(&self) -> impl Iterator<Item = FilenameTransition<'_>> + '_ {
+        let mut entries = Vec::new();
+        self.with(|p| p.filename_trans_entries(&mut entries));
+        let names = self.names();
+        entries.into_iter().filter_map(move |entry| {
+            Some(FilenameTransition {
+                source: rules::name(names.type_name_bytes(entry.source))?,
+                target: rules::name(names.type_name_bytes(entry.target))?,
+                class: rules::name(names.class_name_bytes(entry.class_))?,
+                default: rules::name(names.type_name_bytes(entry.default_type))?,
+                name: rules::name(entry.name)?,
+            })
+        })
+    }
+
+    /// `genfscon` statements.
+    pub fn genfs(&self) -> impl Iterator<Item = Genfs<'_>> + '_ {
+        let mut entries = Vec::new();
+        self.with(|p| p.genfs_entries(&mut entries));
+        entries.into_iter().filter_map(|entry| {
+            Some(Genfs {
+                fs: rules::name(entry.fs)?,
+                path: rules::name(entry.path)?,
+                context: entry.context,
+            })
+        })
+    }
+
     pub fn attributes(&self) -> Vec<String> {
-        self.with(|p| p.attributes())
+        self.attribute_names()
+            .map(|name| format!("attribute {name}"))
+            .collect()
     }
 
     pub fn types(&self) -> Vec<String> {
-        self.with(|p| p.types())
+        let mut out = Vec::new();
+        for decl in self.type_decls() {
+            if !decl.attributes.is_empty() {
+                out.push(format!(
+                    "type {} {{ {} }}",
+                    decl.name,
+                    decl.attributes.join(" ")
+                ));
+            }
+            if decl.permissive {
+                out.push(format!("permissive {}", decl.name));
+            }
+        }
+        out
     }
 
     pub fn avtabs(&self) -> Vec<String> {
-        self.with(|p| p.avtabs())
+        self.avtab_rules().map(|rule| render(&rule)).collect()
     }
 
     pub fn transitions(&self) -> Vec<String> {
-        self.with(|p| p.transitions())
+        self.filename_transitions()
+            .map(|rule| rule.to_string())
+            .collect()
     }
 
     pub fn genfs_contexts(&self) -> Vec<String> {
-        self.with(|p| p.genfs_contexts())
+        self.genfs().map(|genfs| genfs.to_string()).collect()
     }
 
     pub fn rules(&self) -> Vec<String> {
@@ -341,6 +462,16 @@ impl SePolicy {
         );
         self.genfscon(&g.filesystem, &g.path, &ctx);
     }
+}
+
+/// Format `value` into a buffer sized for a typical rule line, avoiding the
+/// repeated growth of `to_string`.
+fn render(value: &impl std::fmt::Display) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::with_capacity(96);
+    write!(out, "{value}").expect("formatting into a String cannot fail");
+    out
 }
 
 impl Drop for SePolicy {
@@ -759,5 +890,133 @@ mod tests {
             has_transition,
             "filename type_transition should exist in transitions"
         );
+    }
+
+    fn patched(rules: &str) -> SePolicy {
+        let mut sepolicy = load_policy();
+        sepolicy.apply_policy(&parser::parse(rules).expect("failed to parse policy"));
+        sepolicy
+    }
+
+    #[test]
+    fn test_av_rules_structured() {
+        let sepolicy = patched(
+            "type q_av_src_t;\ntype q_av_tgt_t;\nallow q_av_src_t q_av_tgt_t:process { fork sigchld };",
+        );
+
+        let rule = sepolicy
+            .av_rules()
+            .find(|rule| rule.source == "q_av_src_t" && rule.target == "q_av_tgt_t")
+            .expect("allow rule should be listed");
+
+        assert_eq!(rule.kind, rules::AvRuleKind::Allow);
+        assert_eq!(rule.class, "process");
+        let mut perms: Vec<_> = rule.perms().collect();
+        perms.sort();
+        assert_eq!(perms, ["fork", "sigchld"]);
+        assert!(
+            matches!(rule.source, Cow::Borrowed(_)),
+            "names should borrow from the policy"
+        );
+    }
+
+    #[test]
+    fn test_dontaudit_rule_lists_silenced_perms() {
+        let sepolicy = patched(
+            "type q_da_src_t;\ntype q_da_tgt_t;\ndontaudit q_da_src_t q_da_tgt_t:process fork;",
+        );
+
+        let rule = sepolicy
+            .av_rules()
+            .find(|rule| rule.source == "q_da_src_t")
+            .expect("dontaudit rule should be listed");
+
+        assert_eq!(rule.kind, rules::AvRuleKind::DontAudit);
+        assert_eq!(rule.perms().collect::<Vec<_>>(), ["fork"]);
+    }
+
+    #[test]
+    fn test_type_rules_structured() {
+        let sepolicy = patched(
+            "type q_tr_src_t;\ntype q_tr_tgt_t;\ntype q_tr_dest_t;\ntype_change q_tr_src_t q_tr_tgt_t:file q_tr_dest_t;",
+        );
+
+        let rule = sepolicy
+            .type_rules()
+            .find(|rule| rule.source == "q_tr_src_t")
+            .expect("type_change rule should be listed");
+
+        assert_eq!(rule.kind, rules::TypeRuleKind::Change);
+        assert_eq!(rule.target, "q_tr_tgt_t");
+        assert_eq!(rule.class, "file");
+        assert_eq!(rule.default, "q_tr_dest_t");
+    }
+
+    #[test]
+    fn test_xperm_rules_structured() {
+        let sepolicy = patched(
+            "type q_xp_src_t;\ntype q_xp_tgt_t;\nallowxperm q_xp_src_t q_xp_tgt_t:unix_stream_socket ioctl { 0x5401 0x5413-0x5414 };",
+        );
+
+        let rule = sepolicy
+            .xperm_rules()
+            .find(|rule| rule.source == "q_xp_src_t")
+            .expect("allowxperm rule should be listed");
+
+        assert_eq!(rule.kind, rules::XpermRuleKind::Allow);
+        assert_eq!(
+            rule.ioctls.ranges().collect::<Vec<_>>(),
+            [(0x5401, 0x5401), (0x5413, 0x5414)]
+        );
+        assert_eq!(
+            rule.to_string(),
+            "allowxperm q_xp_src_t q_xp_tgt_t unix_stream_socket ioctl { 0x5401 0x5413-0x5414 }"
+        );
+    }
+
+    #[test]
+    fn test_type_decls_and_attribute_names() {
+        let sepolicy =
+            patched("attribute q_decl_attr;\ntype q_decl_t, q_decl_attr;\npermissive q_decl_t;");
+
+        let decl = sepolicy
+            .type_decls()
+            .find(|decl| decl.name == "q_decl_t")
+            .expect("type should be listed");
+
+        assert!(decl.attributes.iter().any(|attr| attr == "q_decl_attr"));
+        assert!(decl.permissive);
+        assert!(sepolicy.attribute_names().any(|name| name == "q_decl_attr"));
+    }
+
+    #[test]
+    fn test_filename_transitions_structured() {
+        let sepolicy = patched(
+            "type q_ft_src_t;\ntype q_ft_tgt_t;\ntype q_ft_dest_t;\ntype_transition q_ft_src_t q_ft_tgt_t:file q_ft_dest_t \"q_ft_name\";",
+        );
+
+        let rule = sepolicy
+            .filename_transitions()
+            .find(|rule| rule.source == "q_ft_src_t")
+            .expect("filename transition should be listed");
+
+        assert_eq!(rule.target, "q_ft_tgt_t");
+        assert_eq!(rule.class, "file");
+        assert_eq!(rule.default, "q_ft_dest_t");
+        assert_eq!(rule.name, "q_ft_name");
+    }
+
+    #[test]
+    fn test_genfs_structured() {
+        let sepolicy =
+            patched("type q_genfs_t;\ngenfscon sysfs /q/genfs/path u:object_r:q_genfs_t:s0");
+
+        let genfs = sepolicy
+            .genfs()
+            .find(|genfs| genfs.path == "/q/genfs/path")
+            .expect("genfscon should be listed");
+
+        assert_eq!(genfs.fs, "sysfs");
+        assert_eq!(genfs.context, "u:object_r:q_genfs_t:s0");
     }
 }
