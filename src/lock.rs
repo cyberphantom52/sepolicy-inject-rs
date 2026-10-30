@@ -10,7 +10,8 @@
 //! - `sepol_compat_handle` (`debug.c`), whose message fields are written by
 //!   every `ERR`/`WARN`/`INFO` issued without an explicit handle;
 //! - `avtab_android_m_compat` (`avtab.c`), set by `policydb_read` and read
-//!   by `policydb_write`.
+//!   by later reads and by `policydb_write`; each policy keeps its own value
+//!   and loads it only around its own write.
 //!
 //! [`SePolicy`](crate::SePolicy) and [`CilPolicy`](crate::CilPolicy) hold this
 //! lock for every call that reaches libsepol, including dropping a binary
