@@ -5,7 +5,7 @@ use cxx::UniquePtr;
 
 use crate::{
     SePolicy,
-    error::{Error, Result, path_str, read_to_string},
+    error::{Error, Result, read_to_string},
     ffi::{CilPolicyImpl, cil_new_impl},
     lock,
     parser::{ToCil, ast::Policy},
@@ -43,6 +43,12 @@ impl CilPolicy {
     }
 
     /// Run `f` against the database while holding the libsepol lock.
+    fn with<R>(&self, f: impl FnOnce(&CilPolicyImpl) -> R) -> R {
+        let _guard = lock::libsepol();
+        f(&self.inner)
+    }
+
+    /// Run `f` against the mutable database while holding the libsepol lock.
     fn with_mut<R>(&mut self, f: impl FnOnce(Pin<&mut CilPolicyImpl>) -> R) -> R {
         let _guard = lock::libsepol();
         f(self.inner.pin_mut())
@@ -107,14 +113,22 @@ impl CilPolicy {
         self.add_file(&source)
     }
 
+    /// Render the loaded CIL database as merged CIL source.
+    pub fn to_cil(&self) -> Result<String> {
+        let mut out = String::new();
+        if !self.with(|p| p.to_cil(&mut out)) {
+            return Err(Error::CilSerialize);
+        }
+        Ok(out)
+    }
+
     /// Write the loaded CIL database back out as merged CIL source.
     pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        let path_str = path_str(path)?;
-        if !self.with_mut(|p| p.write(path_str)) {
-            return Err(Error::WritePolicy(path.to_path_buf()));
-        }
-        Ok(())
+        std::fs::write(path, self.to_cil()?).map_err(|source| Error::Write {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 
     /// Validate an ordered list of CIL files by building and resolving their
@@ -311,6 +325,87 @@ mod tests {
         assert!(
             written.contains("(type cil_repeat_t)"),
             "merged CIL output should contain the patched type"
+        );
+    }
+
+    #[test]
+    fn test_to_cil_matches_write() {
+        let source = cil_fixture_path("test_handle.cil");
+        let patch = crate::parser::parse("type cil_to_cil_t;").expect("failed to parse TE patch");
+        let output = TempOutput::new("to-cil-matches-write");
+
+        let mut policy = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .add_policy(&patch)
+            .expect("failed to apply TE patch to CIL");
+
+        let rendered = policy.to_cil().expect("failed to render CIL");
+        assert!(
+            rendered.contains("(type cil_to_cil_t)"),
+            "rendered CIL should contain the patched type"
+        );
+        assert_eq!(
+            rendered,
+            policy.to_cil().expect("failed to render CIL twice"),
+            "rendering should be repeatable"
+        );
+
+        policy
+            .write(output.path())
+            .expect("failed to write merged CIL policy");
+        let written =
+            std::fs::read_to_string(output.path()).expect("failed to read merged CIL output");
+        assert_eq!(
+            rendered, written,
+            "write should emit exactly to_cil's output"
+        );
+    }
+
+    #[test]
+    fn test_to_cil_round_trips_through_compile() {
+        let source = cil_fixture_path("test_handle.cil");
+        let patch = crate::parser::parse(
+            "type cil_round_trip_t;\nallow cil_round_trip_t self:test_class test_perm;",
+        )
+        .expect("failed to parse TE patch");
+
+        let rendered = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .add_policy(&patch)
+            .expect("failed to apply TE patch to CIL")
+            .to_cil()
+            .expect("failed to render CIL");
+
+        let compiled = CilPolicy::new()
+            .add_file(&rendered)
+            .expect("rendered CIL should parse")
+            .compile()
+            .expect("rendered CIL should compile");
+
+        assert!(
+            compiled
+                .avtabs()
+                .iter()
+                .any(|rule| rule.starts_with("allow cil_round_trip_t cil_round_trip_t test_class")),
+            "compiled policy should contain the patched allow rule"
+        );
+    }
+
+    #[test]
+    fn test_write_reports_io_error() {
+        let source = cil_fixture_path("test_handle.cil");
+        let missing_dir = std::env::temp_dir()
+            .join("sepolicy-inject-rs-missing-dir")
+            .join("out.cil");
+
+        let err = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .write(&missing_dir)
+            .expect_err("writing into a missing directory should fail");
+
+        assert!(
+            matches!(err, Error::Write { ref path, .. } if path == &missing_dir),
+            "unexpected error: {err:?}"
         );
     }
 }

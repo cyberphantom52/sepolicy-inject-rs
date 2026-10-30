@@ -34,8 +34,7 @@ public:
   bool add_file(rust::Str source) noexcept;
   bool add_file(const char *source, size_t size) noexcept;
   bool validate() noexcept;
-  bool write(rust::Str path) noexcept;
-  bool write(const char *path) noexcept;
+  bool to_cil(rust::String &out) const noexcept;
   void set_policy_version(int version) noexcept;
   std::unique_ptr<SePolicyImpl> compile() noexcept;
 };

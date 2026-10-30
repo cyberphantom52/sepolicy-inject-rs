@@ -35,6 +35,13 @@ pub enum Error {
     #[error("failed to write policy to {}", .0.display())]
     WritePolicy(PathBuf),
 
+    #[error("failed to write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("failed to add CIL source")]
     CilAdd,
 
@@ -43,6 +50,9 @@ pub enum Error {
 
     #[error("failed to compile CIL policy")]
     CilCompile,
+
+    #[error("failed to serialize CIL policy")]
+    CilSerialize,
 
     #[error("failed to render policy patch into CIL")]
     CilRender,
