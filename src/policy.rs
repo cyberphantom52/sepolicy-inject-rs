@@ -1019,4 +1019,30 @@ mod tests {
         assert_eq!(genfs.fs, "sysfs");
         assert_eq!(genfs.context, "u:object_r:q_genfs_t:s0");
     }
+
+    #[test]
+    fn test_filename_transitions_with_shared_key() {
+        // Same target, class and name with different defaults: libsepol chains
+        // these as datums under one key.
+        let sepolicy = patched(
+            "type q_fk_src1_t;\ntype q_fk_src2_t;\ntype q_fk_tgt_t;\ntype q_fk_dest1_t;\ntype q_fk_dest2_t;\n\
+             type_transition q_fk_src1_t q_fk_tgt_t:file q_fk_dest1_t \"q_fk_name\";\n\
+             type_transition q_fk_src2_t q_fk_tgt_t:file q_fk_dest2_t \"q_fk_name\";",
+        );
+
+        let mut found: Vec<_> = sepolicy
+            .filename_transitions()
+            .filter(|rule| rule.target == "q_fk_tgt_t")
+            .map(|rule| (rule.source.into_owned(), rule.default.into_owned()))
+            .collect();
+        found.sort();
+
+        assert_eq!(
+            found,
+            [
+                ("q_fk_src1_t".to_string(), "q_fk_dest1_t".to_string()),
+                ("q_fk_src2_t".to_string(), "q_fk_dest2_t".to_string()),
+            ]
+        );
+    }
 }

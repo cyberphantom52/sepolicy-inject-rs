@@ -358,20 +358,23 @@ void SePolicyImpl::filename_trans_entries(
     rust::Vec<FilenameTransEntry> &out) const noexcept {
   for_each_hashtab(db->filename_trans, [&](hashtab_ptr_t node) {
     auto key = reinterpret_cast<filename_trans_key_t *>(node->key);
-    auto trans = static_cast<filename_trans_datum *>(node->datum);
     if (key->name == nullptr)
       return;
 
-    ebitmap_node_t *n;
-    uint32_t bit;
-    ebitmap_for_each_positive_bit(&trans->stypes, n, bit) {
-      FilenameTransEntry entry;
-      entry.source = bit + 1;
-      entry.target = key->ttype;
-      entry.class_ = key->tclass;
-      entry.default_type = trans->otype;
-      entry.name = name_bytes(key->name);
-      out.push_back(entry);
+    // A key maps to a chain of datums, one per default type.
+    for (auto trans = static_cast<filename_trans_datum *>(node->datum); trans;
+         trans = trans->next) {
+      ebitmap_node_t *n;
+      uint32_t bit;
+      ebitmap_for_each_positive_bit(&trans->stypes, n, bit) {
+        FilenameTransEntry entry;
+        entry.source = bit + 1;
+        entry.target = key->ttype;
+        entry.class_ = key->tclass;
+        entry.default_type = trans->otype;
+        entry.name = name_bytes(key->name);
+        out.push_back(entry);
+      }
     }
   });
 }
