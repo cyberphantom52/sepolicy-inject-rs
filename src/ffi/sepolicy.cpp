@@ -182,8 +182,12 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
     ffi_log_error("Failed to open SELinux version file: " SELINUX_VERSION);
     return nullptr;
   }
-  fscanf(f, "%d", &policy_ver);
+  int scanned = fscanf(f, "%d", &policy_ver);
   fclose(f);
+  if (scanned != 1) {
+    ffi_log_error("Failed to read SELinux version from " SELINUX_VERSION);
+    return nullptr;
+  }
   cil.set_policy_version(policy_ver);
   ffi_log_debug("Policy version: " + std::to_string(policy_ver));
 
@@ -193,12 +197,27 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
     ffi_log_error("Failed to open platform sepolicy version file");
     return nullptr;
   }
-  fscanf(f, "%s", plat_ver);
+  scanned = fscanf(f, "%9s", plat_ver);
   fclose(f);
+  if (scanned != 1) {
+    ffi_log_error("Failed to read platform sepolicy version");
+    return nullptr;
+  }
   ffi_log_debug("Platform version: " + std::string(plat_ver));
 
-  ffi_log_debug("Adding base CIL file: " SPLIT_PLAT_CIL);
-  cil.add_file(SPLIT_PLAT_CIL);
+  // add_file takes CIL source text, so load each file's contents.
+  auto add_cil_file = [&](const char *file) {
+    ffi_log_debug(std::string("Adding CIL file: ") + file);
+    auto content = read_file(file);
+    if (!content) {
+      ffi_log_error(std::string("Failed to read CIL file: ") + file);
+      return false;
+    }
+    return cil.add_file(content->data(), content->size());
+  };
+
+  if (!add_cil_file(SPLIT_PLAT_CIL))
+    return nullptr;
 
   for (const char *file : CIL_FILES) {
     const char *actual_file = file;
@@ -206,10 +225,9 @@ std::unique_ptr<SePolicyImpl> compile_split_impl() noexcept {
       snprintf(path, sizeof(path), file, plat_ver);
       actual_file = path;
     }
-    if (access(actual_file, R_OK) == 0) {
-      ffi_log_debug(std::string("Adding CIL file: ") + actual_file);
-      cil.add_file(actual_file);
-    }
+    // Compiling without a present file would load an incomplete policy.
+    if (access(actual_file, R_OK) == 0 && !add_cil_file(actual_file))
+      return nullptr;
   }
 
   ffi_log_debug("Compiling CIL database");

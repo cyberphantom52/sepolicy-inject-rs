@@ -6,6 +6,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <string>
 #include <fcntl.h>
 #include <unistd.h>
 #include "sepolicy.hpp"
@@ -168,4 +169,22 @@ inline std::optional<unique_file> open_file(const char *path, const char *mode) 
         return unique_file(fp);
     }
     return std::nullopt;
+}
+
+inline std::optional<std::string> read_file(const char *path) {
+    auto file = open_file(path, "re");
+    if (!file) {
+        return std::nullopt;
+    }
+
+    std::string content;
+    char buf[8192];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), file->get())) > 0) {
+        content.append(buf, n);
+    }
+    if (std::ferror(file->get())) {
+        return std::nullopt;
+    }
+    return content;
 }
