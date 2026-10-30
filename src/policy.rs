@@ -1,17 +1,67 @@
 use std::path::Path;
+use std::pin::Pin;
+
+use cxx::UniquePtr;
 
 use crate::error::{Error, Result, path_str};
-use crate::ffi::{self, SePolicy};
+use crate::ffi::{self, SePolicyImpl, XPerm};
+use crate::lock;
 use crate::parser::ast::*;
 use tracing::{debug, error, info, warn};
 
+/// A binary SELinux policy database.
+///
+/// # Thread safety
+///
+/// Every call that reaches libsepol takes a crate-wide lock, so separate
+/// instances can be used from different threads at the same time. A
+/// `SePolicy` itself is neither `Send` nor `Sync`: create it on the thread that
+/// uses it.
+///
+/// ```compile_fail
+/// fn assert_send<T: Send>() {}
+/// assert_send::<sepolicy::SePolicy>();
+/// ```
+///
+/// ```compile_fail
+/// fn assert_sync<T: Sync>() {}
+/// assert_sync::<sepolicy::SePolicy>();
+/// ```
+pub struct SePolicy {
+    inner: UniquePtr<SePolicyImpl>,
+}
+
 impl SePolicy {
+    /// Wrap a database returned by the C++ side; `None` if it is null.
+    pub(crate) fn from_impl(inner: UniquePtr<SePolicyImpl>) -> Option<Self> {
+        if inner.is_null() {
+            None
+        } else {
+            Some(SePolicy { inner })
+        }
+    }
+
+    /// Run `f` against the database while holding the libsepol lock.
+    fn with<R>(&self, f: impl FnOnce(&SePolicyImpl) -> R) -> R {
+        let _guard = lock::libsepol();
+        f(&self.inner)
+    }
+
+    /// Run `f` against the mutable database while holding the libsepol lock.
+    fn with_mut<R>(&mut self, f: impl FnOnce(Pin<&mut SePolicyImpl>) -> R) -> R {
+        let _guard = lock::libsepol();
+        f(self.inner.pin_mut())
+    }
+
     /// Load policy from a file
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let path_str = path_str(path)?;
         info!(path = %path_str, "Loading policy from file");
-        let inner = ffi::from_file_impl(path_str);
+        let inner = {
+            let _guard = lock::libsepol();
+            ffi::from_file_impl(path_str)
+        };
         if inner.is_null() {
             error!(path = %path_str, "Failed to load policy from file");
             Err(Error::LoadPolicy(path.to_path_buf()))
@@ -23,7 +73,10 @@ impl SePolicy {
 
     pub fn from_split() -> Result<Self> {
         info!("Loading policy from split (precompiled)");
-        let inner = ffi::from_split_impl();
+        let inner = {
+            let _guard = lock::libsepol();
+            ffi::from_split_impl()
+        };
         if inner.is_null() {
             error!("Failed to load policy from split");
             Err(Error::LoadSplit)
@@ -35,7 +88,10 @@ impl SePolicy {
 
     pub fn compile_split() -> Result<Self> {
         info!("Compiling policy from split CIL files");
-        let inner = ffi::compile_split_impl();
+        let inner = {
+            let _guard = lock::libsepol();
+            ffi::compile_split_impl()
+        };
         if inner.is_null() {
             error!("Failed to compile policy from split");
             Err(Error::CompileSplit)
@@ -47,7 +103,10 @@ impl SePolicy {
 
     pub fn from_data(data: &[u8]) -> Result<Self> {
         info!(size = data.len(), "Loading policy from memory");
-        let inner = ffi::from_data_impl(data);
+        let inner = {
+            let _guard = lock::libsepol();
+            ffi::from_data_impl(data)
+        };
         if inner.is_null() {
             error!(size = data.len(), "Failed to load policy from memory");
             Err(Error::LoadPolicyData)
@@ -60,10 +119,95 @@ impl SePolicy {
     /// Serialize the binary policy to a file
     pub fn write(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        if !self.write_impl(path_str(path)?) {
+        let path_str = path_str(path)?;
+        if !self.with(|p| p.write(path_str)) {
             return Err(Error::WritePolicy(path.to_path_buf()));
         }
         Ok(())
+    }
+
+    pub fn allow(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]) {
+        self.with_mut(|p| p.allow(src, tgt, cls, perm));
+    }
+
+    pub fn deny(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]) {
+        self.with_mut(|p| p.deny(src, tgt, cls, perm));
+    }
+
+    pub fn auditallow(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]) {
+        self.with_mut(|p| p.auditallow(src, tgt, cls, perm));
+    }
+
+    pub fn dontaudit(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], perm: &[&str]) {
+        self.with_mut(|p| p.dontaudit(src, tgt, cls, perm));
+    }
+
+    pub fn allowxperm(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], x_perm: &[XPerm]) {
+        self.with_mut(|p| p.allowxperm(src, tgt, cls, x_perm));
+    }
+
+    pub fn auditallowxperm(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], x_perm: &[XPerm]) {
+        self.with_mut(|p| p.auditallowxperm(src, tgt, cls, x_perm));
+    }
+
+    pub fn dontauditxperm(&mut self, src: &[&str], tgt: &[&str], cls: &[&str], x_perm: &[XPerm]) {
+        self.with_mut(|p| p.dontauditxperm(src, tgt, cls, x_perm));
+    }
+
+    pub fn permissive(&mut self, types: &[&str]) {
+        self.with_mut(|p| p.permissive(types));
+    }
+
+    pub fn enforce(&mut self, types: &[&str]) {
+        self.with_mut(|p| p.enforce(types));
+    }
+
+    pub fn typeattribute(&mut self, ty: &[&str], attrs: &[&str]) {
+        self.with_mut(|p| p.typeattribute(ty, attrs));
+    }
+
+    pub fn type_(&mut self, ty: &str, attrs: &[&str]) {
+        self.with_mut(|p| p.type_(ty, attrs));
+    }
+
+    pub fn attribute(&mut self, name: &str) {
+        self.with_mut(|p| p.attribute(name));
+    }
+
+    pub fn type_transition(&mut self, src: &str, tgt: &str, cls: &str, dest: &str, obj: &str) {
+        self.with_mut(|p| p.type_transition(src, tgt, cls, dest, obj));
+    }
+
+    pub fn type_change(&mut self, src: &str, tgt: &str, cls: &str, dest: &str) {
+        self.with_mut(|p| p.type_change(src, tgt, cls, dest));
+    }
+
+    pub fn type_member(&mut self, src: &str, tgt: &str, cls: &str, dest: &str) {
+        self.with_mut(|p| p.type_member(src, tgt, cls, dest));
+    }
+
+    pub fn genfscon(&mut self, fs: &str, path: &str, context: &str) {
+        self.with_mut(|p| p.genfscon(fs, path, context));
+    }
+
+    pub fn attributes(&self) -> Vec<String> {
+        self.with(|p| p.attributes())
+    }
+
+    pub fn types(&self) -> Vec<String> {
+        self.with(|p| p.types())
+    }
+
+    pub fn avtabs(&self) -> Vec<String> {
+        self.with(|p| p.avtabs())
+    }
+
+    pub fn transitions(&self) -> Vec<String> {
+        self.with(|p| p.transitions())
+    }
+
+    pub fn genfs_contexts(&self) -> Vec<String> {
+        self.with(|p| p.genfs_contexts())
     }
 
     pub fn rules(&self) -> Vec<String> {
@@ -196,6 +340,14 @@ impl SePolicy {
                 .unwrap_or_default()
         );
         self.genfscon(&g.filesystem, &g.path, &ctx);
+    }
+}
+
+impl Drop for SePolicy {
+    fn drop(&mut self) {
+        // policydb_destroy reaches libsepol too, so free the database under the lock.
+        let _guard = lock::libsepol();
+        self.inner = UniquePtr::null();
     }
 }
 

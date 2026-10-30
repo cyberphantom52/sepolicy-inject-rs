@@ -1,17 +1,51 @@
 use std::path::Path;
+use std::pin::Pin;
+
+use cxx::UniquePtr;
 
 use crate::{
     SePolicy,
     error::{Error, Result, path_str, read_to_string},
-    ffi::{CilPolicy, cil_new_impl},
+    ffi::{CilPolicyImpl, cil_new_impl},
+    lock,
     parser::{ToCil, ast::Policy},
 };
+
+/// A CIL policy database that sources are added to before validating,
+/// writing, or compiling it.
+///
+/// # Thread safety
+///
+/// Every call that reaches libsepol takes a crate-wide lock, so separate
+/// instances can be used from different threads at the same time. A
+/// `CilPolicy` itself is neither `Send` nor `Sync`: create it on the thread that
+/// uses it.
+///
+/// ```compile_fail
+/// fn assert_send<T: Send>() {}
+/// assert_send::<sepolicy::CilPolicy>();
+/// ```
+///
+/// ```compile_fail
+/// fn assert_sync<T: Sync>() {}
+/// assert_sync::<sepolicy::CilPolicy>();
+/// ```
+pub struct CilPolicy {
+    inner: UniquePtr<CilPolicyImpl>,
+}
 
 impl CilPolicy {
     /// Create a new empty CIL policy
     pub fn new() -> Self {
+        let _guard = lock::libsepol();
         let inner = cil_new_impl();
         CilPolicy { inner }
+    }
+
+    /// Run `f` against the database while holding the libsepol lock.
+    fn with_mut<R>(&mut self, f: impl FnOnce(Pin<&mut CilPolicyImpl>) -> R) -> R {
+        let _guard = lock::libsepol();
+        f(self.inner.pin_mut())
     }
 
     /// Create a new CIL policy seeded from a single file.
@@ -41,7 +75,7 @@ impl CilPolicy {
 
     /// Validate the loaded CIL database by building and resolving its AST.
     pub fn validate(&mut self) -> Result<()> {
-        if !self.inner.pin_mut().validate() {
+        if !self.with_mut(|p| p.validate()) {
             return Err(Error::CilValidate);
         }
 
@@ -50,18 +84,12 @@ impl CilPolicy {
 
     /// Compile the loaded CIL database into a [`SePolicy`].
     pub fn compile(&mut self) -> Result<SePolicy> {
-        let inner = self.inner.pin_mut().compile();
-
-        if inner.is_null() {
-            return Err(Error::CilCompile);
-        }
-
-        Ok(SePolicy { inner })
+        SePolicy::from_impl(self.with_mut(|p| p.compile())).ok_or(Error::CilCompile)
     }
 
     /// Add CIL source text to the policy database.
     pub fn add_file(mut self, source: &str) -> Result<Self> {
-        if !self.inner.pin_mut().add_file(source) {
+        if !self.with_mut(|p| p.add_file(source)) {
             return Err(Error::CilAdd);
         }
         Ok(self)
@@ -82,7 +110,8 @@ impl CilPolicy {
     /// Write the loaded CIL database back out as merged CIL source.
     pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        if !self.inner.pin_mut().write(path_str(path)?) {
+        let path_str = path_str(path)?;
+        if !self.with_mut(|p| p.write(path_str)) {
             return Err(Error::WritePolicy(path.to_path_buf()));
         }
         Ok(())
