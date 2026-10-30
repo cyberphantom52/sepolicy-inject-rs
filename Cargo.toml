@@ -6,6 +6,7 @@ edition = "2024"
 [[bin]]
 name = "sepolicy-inject-rs"
 path = "src/main.rs"
+required-features = ["m4"]
 
 [lib]
 name = "sepolicy"
@@ -17,13 +18,14 @@ cxx = "1.0.192"
 pest = "2.8.4"
 pest_derive = "2.8.4"
 thiserror = "2.0.17"
-m4rs = { git = "https://github.com/cyberphantom52/m4rs.git", rev = "39f429bfcdf69780cbb04a3cf6bf5446bd74f0a5" }
+m4rs = { optional = true, git = "https://github.com/cyberphantom52/m4rs.git", rev = "39f429bfcdf69780cbb04a3cf6bf5446bd74f0a5" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-android = { version = "0.2", optional = true }
 
 [features]
-default = []
+default = ["m4"]
+m4 = ["dep:m4rs"]
 android = ["tracing-android"]
 
 [build-dependencies]

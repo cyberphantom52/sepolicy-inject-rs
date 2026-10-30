@@ -3,7 +3,7 @@ use sepolicy::parser::ast::Policy;
 use sepolicy::{CilPolicy, SePolicy, log, parser};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 #[derive(Subcommand)]
 enum Source {
@@ -320,21 +320,19 @@ fn prepare_cil_patch_from_files<'a, I>(
     files: I,
     policies: &[PathBuf],
     macros: &[PathBuf],
-) -> Result<CilPolicy, String>
+) -> sepolicy::Result<CilPolicy>
 where
     I: IntoIterator<Item = &'a Path>,
 {
-    let mut cil_policy = CilPolicy::from_files(files).map_err(|e| {
+    let mut cil_policy = CilPolicy::from_files(files).inspect_err(|e| {
         error!(error = %e, "Failed to load CIL file(s)");
-        format!("Failed to load CIL file(s): {}", e)
     })?;
 
     for te_path in policies {
         let policy = prepare_patch(te_path, macros)?;
 
-        cil_policy = cil_policy.add_policy(&policy).map_err(|e| {
+        cil_policy = cil_policy.add_policy(&policy).inspect_err(|e| {
             error!(path = %te_path.display(), error = %e, "Failed to translate patch policy into CIL");
-            format!("Failed to translate patch policy into CIL: {}", e)
         })?;
     }
 
@@ -345,7 +343,7 @@ fn prepare_cil_patch(
     source: &Path,
     policies: &[PathBuf],
     macros: &[PathBuf],
-) -> Result<CilPolicy, String> {
+) -> sepolicy::Result<CilPolicy> {
     prepare_cil_patch_from_files(std::iter::once(source), policies, macros)
 }
 
@@ -354,7 +352,7 @@ fn validate_cil_patch(
     resolve_with: &[PathBuf],
     policies: &[PathBuf],
     macros: &[PathBuf],
-) -> Result<(), String> {
+) -> sepolicy::Result<()> {
     let mut cil_policy = prepare_cil_patch_from_files(
         resolve_with
             .iter()
@@ -364,9 +362,8 @@ fn validate_cil_patch(
         macros,
     )?;
 
-    cil_policy.validate().map_err(|e| {
+    cil_policy.validate().inspect_err(|e| {
         error!(path = %source.display(), error = %e, "Failed to resolve patched CIL policy");
-        format!("Failed to resolve patched CIL policy: {}", e)
     })
 }
 
@@ -440,44 +437,9 @@ fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-pub fn prepare_patch<P, I>(path: P, macros: I) -> Result<Policy, String>
-where
-    P: AsRef<Path>,
-    I: IntoIterator<Item = P>,
-{
-    use m4rs::processor::{Expander, MacroRegistry};
-
-    let path_display = path.as_ref().display().to_string();
-
-    let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-        error!(path = %path_display, error = %e, "Failed to read file");
-        format!("Failed to read file: {}", e)
-    })?;
-
-    // Load macro definitions
-    let mut registry = MacroRegistry::new();
-    for macro_path in macros {
-        let macro_path_str = macro_path
-            .as_ref()
-            .to_str()
-            .ok_or("Macro path contains invalid UTF-8")?;
-        debug!(macro_path = %macro_path_str, "Loading macro file");
-        registry.load_file(macro_path_str).map_err(|e| {
-            error!(macro_path = %macro_path_str, error = %e, "Failed to load macro file");
-            format!("Failed to load macro file: {}", e)
-        })?;
-    }
-
-    // Expand macros
-    let mut expander = Expander::new(registry);
-    let expanded = expander.expand(&content).map_err(|e| {
-        error!(path = %path_display, error = %e, "M4 expansion failed");
-        format!("M4 expansion failed: {}", e)
-    })?;
-
-    parser::parse(&expanded).map_err(|e| {
-        error!(path = %path_display, error = %e, "Parse error");
-        format!("Parse error: {}", e)
+fn prepare_patch(path: &Path, macros: &[PathBuf]) -> sepolicy::Result<Policy> {
+    parser::parse_file(path, macros).inspect_err(|e| {
+        error!(path = %path.display(), error = %e, "Failed to prepare patch");
     })
 }
 
