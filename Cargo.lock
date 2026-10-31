@@ -277,8 +277,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "m4rs"
-version = "0.3.0"
-source = "git+https://github.com/cyberphantom52/m4rs.git?rev=5ab95374e8d4329a442eadb89f59d9e8d59d9003#5ab95374e8d4329a442eadb89f59d9e8d59d9003"
+version = "0.4.0"
+source = "git+https://github.com/cyberphantom52/m4rs.git?rev=428021def66a327efe91959f2fb420ed5870e53a#428021def66a327efe91959f2fb420ed5870e53a"
 dependencies = [
  "thiserror",
 ]
