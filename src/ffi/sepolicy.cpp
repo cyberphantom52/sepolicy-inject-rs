@@ -877,15 +877,25 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
     db->genfs = fs;
   }
 
-  auto o_ctx = list_find(fs->head, [&](ocontext_t *n) {
-    return str_eq(n->u.name, path);
-  });
+  // The kernel labels a file with the first entry whose path is a prefix of
+  // the file's path, so keep entries ordered longest path first, inserting
+  // before the first shorter one as checkpolicy does.
+  ocontext_t *o_ctx = nullptr;
+  ocontext_t **link = &fs->head;
+  for (; *link; link = &(*link)->next) {
+    if (str_eq((*link)->u.name, path)) {
+      o_ctx = *link;
+      break;
+    }
+    if (path.size() > strlen((*link)->u.name))
+      break;
+  }
 
   if (!o_ctx) {
     o_ctx = static_cast<ocontext_t *>(calloc(1, sizeof(ocontext_t)));
     o_ctx->u.name = dup_str(path);
-    o_ctx->next = fs->head;
-    fs->head = o_ctx;
+    o_ctx->next = *link;
+    *link = o_ctx;
   }
 
   memset(o_ctx->context, 0, sizeof(o_ctx->context));
