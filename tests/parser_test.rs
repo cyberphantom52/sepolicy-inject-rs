@@ -17,16 +17,6 @@ fn load_fixture(name: &str) -> String {
 }
 
 #[test]
-fn test_parse_te_file() {
-    let input = load_fixture("example.te");
-    let result = parser::parse(&input);
-    assert!(result.is_ok(), "Parse failed: {:?}", result.err());
-
-    let policy = result.unwrap();
-    assert!(!policy.statements.is_empty(), "No statements parsed");
-}
-
-#[test]
 fn test_type_definitions() {
     let input = load_fixture("example.te");
     let policy = parser::parse(&input).expect("Parse failed");

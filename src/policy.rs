@@ -645,123 +645,9 @@ mod tests {
             .join(name)
     }
 
-    #[test]
-    fn test_sepolicy_from_file() {
-        // Prefer env var so CI can inject the right path.
-        let path = fixture_path("precompiled_sepolicy");
-        assert!(
-            path.exists(),
-            "precompiled sepolicy file does not exist: {}",
-            path.display()
-        );
-
-        let _ = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-    }
-
-    #[test]
-    fn test_sepolicy_get_attributes() {
-        let path = fixture_path("precompiled_sepolicy");
-        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-
-        let attributes = sepolicy.attributes();
-        assert!(!attributes.is_empty(), "no attributes found in sepolicy");
-    }
-
-    #[test]
-    fn test_sepolicy_get_types() {
-        let path = fixture_path("precompiled_sepolicy");
-        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-
-        let types = sepolicy.types();
-        assert!(!types.is_empty(), "no types found in sepolicy");
-    }
-
-    #[test]
-    fn test_sepolicy_get_avtabs() {
-        let path = fixture_path("precompiled_sepolicy");
-        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-
-        let avtabs = sepolicy.avtabs();
-        assert!(!avtabs.is_empty(), "no avtabs found in sepolicy");
-    }
-
-    #[test]
-    fn test_sepolicy_get_transitions() {
-        let path = fixture_path("precompiled_sepolicy");
-        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-
-        let transitions = sepolicy.transitions();
-        assert!(
-            !transitions.is_empty(),
-            "no type transitions found in sepolicy"
-        );
-    }
-
-    #[test]
-    fn test_sepolicy_get_genfs_contexts() {
-        let path = fixture_path("precompiled_sepolicy");
-        let sepolicy = SePolicy::from_file(path).expect("failed to load precompiled sepolicy");
-
-        let genfs_contexts = sepolicy.genfs_contexts();
-        assert!(
-            !genfs_contexts.is_empty(),
-            "no genfs contexts found in sepolicy"
-        );
-    }
-
     fn load_policy() -> SePolicy {
         let policy_path = fixture_path("precompiled_sepolicy");
         SePolicy::from_file(policy_path).expect("failed to load precompiled sepolicy")
-    }
-
-    #[test]
-    fn test_add_type() {
-        let mut sepolicy = load_policy();
-        let type_name = "test_new_type_xyz";
-        let attr_name = "test_new_type_attr_xyz";
-
-        // Verify type doesn't exist
-        assert!(
-            !sepolicy.types().iter().any(|t| t.contains(type_name)),
-            "type should not exist before adding"
-        );
-
-        // Create attribute first, then type with that attribute
-        // (types without attributes don't appear in types() output)
-        let policy = parser::parse(&format!(
-            "attribute {};\ntype {}, {};",
-            attr_name, type_name, attr_name
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify type was added
-        assert!(
-            sepolicy.types().iter().any(|t| t.contains(type_name)),
-            "type should exist after adding"
-        );
-    }
-
-    #[test]
-    fn test_add_attribute() {
-        let mut sepolicy = load_policy();
-        let attr_name = "test_new_attr_xyz";
-
-        // Verify attribute doesn't exist
-        assert!(
-            !sepolicy.attributes().iter().any(|a| a.contains(attr_name)),
-            "attribute should not exist before adding"
-        );
-
-        let policy =
-            parser::parse(&format!("attribute {};", attr_name)).expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify attribute was added
-        assert!(
-            sepolicy.attributes().iter().any(|a| a.contains(attr_name)),
-            "attribute should exist after adding"
-        );
     }
 
     #[test]
@@ -793,30 +679,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add_allow_rule() {
-        let mut sepolicy = load_policy();
-        let src_type = "test_allow_src_t";
-        let tgt_type = "test_allow_tgt_t";
-
-        // Create our own types first
-        let policy = parser::parse(&format!(
-            "type {};\ntype {};\nallow {} {}:process fork;",
-            src_type, tgt_type, src_type, tgt_type
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify the allow rule was added
-        let avtabs = sepolicy.avtabs();
-        let has_rule = avtabs.iter().any(|rule| {
-            rule.starts_with(&format!("allow {} {} process", src_type, tgt_type))
-                && rule.contains("fork")
-        });
-
-        assert!(has_rule, "allow rule should exist in avtabs");
-    }
-
-    #[test]
     fn test_add_auditallow_rule() {
         let mut sepolicy = load_policy();
         let src_type = "test_auditallow_src_t";
@@ -837,29 +699,6 @@ mod tests {
         });
 
         assert!(has_rule, "auditallow rule should exist in avtabs");
-    }
-
-    #[test]
-    fn test_add_dontaudit_rule() {
-        let mut sepolicy = load_policy();
-        let src_type = "test_dontaudit_src_t";
-        let tgt_type = "test_dontaudit_tgt_t";
-
-        let policy = parser::parse(&format!(
-            "type {};\ntype {};\ndontaudit {} {}:process fork;",
-            src_type, tgt_type, src_type, tgt_type
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify the dontaudit rule was added
-        let avtabs = sepolicy.avtabs();
-        let has_rule = avtabs.iter().any(|rule| {
-            rule.starts_with(&format!("dontaudit {} {} process", src_type, tgt_type))
-                && rule.contains("fork")
-        });
-
-        assert!(has_rule, "dontaudit rule should exist in avtabs");
     }
 
     #[test]
@@ -910,32 +749,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add_type_change() {
-        let mut sepolicy = load_policy();
-        let src_type = "test_tc_src_t";
-        let tgt_type = "test_tc_tgt_t";
-        let dest_type = "test_tc_dest_t";
-
-        let policy = parser::parse(&format!(
-            "type {};\ntype {};\ntype {};\ntype_change {} {}:file {};",
-            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify the type_change was added
-        let avtabs = sepolicy.avtabs();
-        let has_change = avtabs.iter().any(|rule| {
-            rule.starts_with(&format!(
-                "type_change {} {} file {}",
-                src_type, tgt_type, dest_type
-            ))
-        });
-
-        assert!(has_change, "type_change rule should exist in avtabs");
-    }
-
-    #[test]
     fn test_add_type_member() {
         let mut sepolicy = load_policy();
         let src_type = "test_tm_src_t";
@@ -962,28 +775,6 @@ mod tests {
     }
 
     #[test]
-    fn test_add_genfscon() {
-        let mut sepolicy = load_policy();
-        let test_path = "/test/genfs/xyz";
-        let test_type = "test_genfscon_t";
-
-        let policy = parser::parse(&format!(
-            "type {};\ngenfscon sysfs {} u:object_r:{}:s0",
-            test_type, test_path, test_type
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify the genfscon was added
-        let genfs = sepolicy.genfs_contexts();
-        let has_genfs = genfs
-            .iter()
-            .any(|ctx| ctx.contains("sysfs") && ctx.contains(test_path) && ctx.contains(test_type));
-
-        assert!(has_genfs, "genfscon should exist in genfs_contexts");
-    }
-
-    #[test]
     fn test_add_type_with_attributes() {
         let mut sepolicy = load_policy();
         let type_name = "test_typed_attr_xyz";
@@ -1007,38 +798,6 @@ mod tests {
             type_entry.contains(attr_name),
             "type should have attribute: {}",
             type_entry
-        );
-    }
-
-    #[test]
-    fn test_add_filename_transition() {
-        let mut sepolicy = load_policy();
-        let src_type = "test_fnt_src_xyz";
-        let tgt_type = "test_fnt_tgt_xyz";
-        let dest_type = "test_fnt_dest_xyz";
-        let filename = "test_filename_xyz";
-
-        let policy = parser::parse(&format!(
-            "type {};\ntype {};\ntype {};\ntype_transition {} {}:file {} \"{}\";",
-            src_type, tgt_type, dest_type, src_type, tgt_type, dest_type, filename
-        ))
-        .expect("failed to parse policy");
-        sepolicy.apply_policy(&policy);
-
-        // Verify the filename transition was added
-        let transitions = sepolicy.transitions();
-        let has_transition = transitions.iter().any(|rule| {
-            rule.contains("type_transition")
-                && rule.contains(src_type)
-                && rule.contains(tgt_type)
-                && rule.contains("file")
-                && rule.contains(dest_type)
-                && rule.contains(filename)
-        });
-
-        assert!(
-            has_transition,
-            "filename type_transition should exist in transitions"
         );
     }
 

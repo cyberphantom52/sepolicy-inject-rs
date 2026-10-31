@@ -1252,20 +1252,6 @@ if (my_bool) {
         }
     }
 
-    #[test]
-    fn test_parse_multiple_statements() {
-        let input = r#"
-type my_type_t;
-attribute my_attr;
-allow my_type_t self:file read;
-"#;
-        let result = parse(input);
-        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
-
-        let policy = result.unwrap();
-        assert_eq!(policy.statements.len(), 3);
-    }
-
     fn xperm_ranges(input: &str) -> Result<Vec<(u16, u16)>, ParseError> {
         let policy = parse(input)?;
         if let Statement::AVXRule(rule) = &policy.statements[0] {

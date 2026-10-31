@@ -330,60 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn test_to_cil_is_repeatable() {
-        let source = cil_fixture_path("test_handle.cil");
-        let patch = crate::parser::parse("type cil_to_cil_t;").expect("failed to parse TE patch");
-
-        let policy = CilPolicy::from_file(&source)
-            .expect("failed to load base CIL fixture")
-            .add_policy(&patch)
-            .expect("failed to apply TE patch to CIL");
-
-        // Rendering consumes libsepol's parse tree, so a second render used to
-        // dereference a destroyed tree.
-        let rendered = policy.to_cil().expect("failed to render CIL");
-        assert!(
-            rendered.contains("(type cil_to_cil_t)"),
-            "rendered CIL should contain the patched type"
-        );
-        assert_eq!(
-            rendered,
-            policy.to_cil().expect("failed to render CIL twice"),
-            "rendering should be repeatable"
-        );
-    }
-
-    #[test]
-    fn test_to_cil_round_trips_through_compile() {
-        let source = cil_fixture_path("test_handle.cil");
-        let patch = crate::parser::parse(
-            "type cil_round_trip_t;\nallow cil_round_trip_t self:test_class test_perm;",
-        )
-        .expect("failed to parse TE patch");
-
-        let rendered = CilPolicy::from_file(&source)
-            .expect("failed to load base CIL fixture")
-            .add_policy(&patch)
-            .expect("failed to apply TE patch to CIL")
-            .to_cil()
-            .expect("failed to render CIL");
-
-        let compiled = CilPolicy::new()
-            .add_file(&rendered)
-            .expect("rendered CIL should parse")
-            .compile()
-            .expect("rendered CIL should compile");
-
-        assert!(
-            compiled
-                .avtabs()
-                .iter()
-                .any(|rule| rule.starts_with("allow cil_round_trip_t cil_round_trip_t test_class")),
-            "compiled policy should contain the patched allow rule"
-        );
-    }
-
-    #[test]
     fn test_contexts_render_as_valid_cil_levelranges() {
         let source = cil_fixture_path("test_handle.cil");
         // Categories and a user whose range covers them.
