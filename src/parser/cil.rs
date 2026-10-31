@@ -658,73 +658,55 @@ fn render_context(context: &SecurityContext) -> Option<String> {
 
     let mut rendered = format!("({} {} {}", context.user, context.role, context.type_name);
 
-    if let Some(level) = context.level.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(range) = &context.level {
         rendered.push(' ');
-        rendered.push_str(&render_context_mls_range(level));
+        rendered.push_str(&render_mls_range(range));
     }
 
     rendered.push(')');
     Some(rendered)
 }
 
-/// Render a context's MLS range as a CIL levelrange: `(low high)`. A single
-/// level is both low and high, as checkpolicy reads it; a bare name that is
-/// not a sensitivity is passed through as a named levelrange.
-fn render_context_mls_range(range: &str) -> String {
-    let trimmed = range.trim();
-
-    if let Some((low, high)) = trimmed.split_once('-') {
-        format!(
-            "({} {})",
-            render_level_or_name(low.trim()),
-            render_level_or_name(high.trim())
-        )
-    } else if looks_like_sensitivity(trimmed.split(':').next().unwrap_or_default()) {
-        let level = render_level_or_name(trimmed);
-        format!("({level} {level})")
-    } else {
-        render_level_or_name(trimmed)
-    }
-}
-
-fn render_level_or_name(level: &str) -> String {
-    let trimmed = level.trim();
-
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-        return trimmed.to_string();
-    }
-
-    if let Some((sens, cats)) = trimmed.split_once(':') {
-        let categories = cats
-            .split(',')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(render_category)
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        if categories.is_empty() {
-            format!("({})", sens.trim())
-        } else {
-            format!("({} ({}))", sens.trim(), categories)
+/// Render an MLS range as a CIL levelrange: `(low high)`. A single level is
+/// both low and high, as checkpolicy reads it; a bare name that is not a
+/// sensitivity is passed through as a named levelrange.
+fn render_mls_range(range: &MlsRange) -> String {
+    match &range.high {
+        None if range.low.categories.is_empty()
+            && !looks_like_sensitivity(&range.low.sensitivity) =>
+        {
+            range.low.sensitivity.clone()
         }
-    } else if looks_like_sensitivity(trimmed) {
-        format!("({})", trimmed)
-    } else {
-        trimmed.to_string()
+        None => {
+            let level = render_mls_level(&range.low);
+            format!("({level} {level})")
+        }
+        Some(high) => format!(
+            "({} {})",
+            render_mls_level(&range.low),
+            render_mls_level(high)
+        ),
     }
 }
 
-/// Render one category entry; checkpolicy's `c0.c1023` range is CIL's
-/// `(range c0 c1023)`.
-fn render_category(entry: &str) -> String {
-    match entry.split_once('.') {
-        Some((low, high)) => format!("(range {} {})", low.trim(), high.trim()),
-        None => entry.to_string(),
+/// `(s0)`, `(s0 (c0 (range c2 c5)))`, or a named level as written.
+fn render_mls_level(level: &MlsLevel) -> String {
+    if level.categories.is_empty() {
+        if looks_like_sensitivity(&level.sensitivity) {
+            format!("({})", level.sensitivity)
+        } else {
+            level.sensitivity.clone()
+        }
+    } else {
+        let categories: Vec<String> = level
+            .categories
+            .iter()
+            .map(|category| match category {
+                MlsCategory::Single(name) => name.clone(),
+                MlsCategory::Range(low, high) => format!("(range {low} {high})"),
+            })
+            .collect();
+        format!("({} ({}))", level.sensitivity, categories.join(" "))
     }
 }
 

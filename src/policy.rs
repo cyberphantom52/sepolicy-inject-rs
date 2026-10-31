@@ -1390,4 +1390,22 @@ mod tests {
             "sigchld"
         ));
     }
+
+    #[test]
+    fn test_genfscon_with_categories_is_applied() {
+        let sepolicy = patched(
+            "type q_mls_t;\ngenfscon sysfs /q/mls u:object_r:q_mls_t:s0:c0,c512.c514\ngenfscon sysfs /q/mls2 u:object_r:q_mls_t:s0",
+        );
+
+        let genfs = sepolicy.genfs_contexts();
+        for expected in [
+            "genfscon sysfs /q/mls u:object_r:q_mls_t:s0:c0,c512.c514",
+            "genfscon sysfs /q/mls2 u:object_r:q_mls_t:s0",
+        ] {
+            assert!(
+                genfs.iter().any(|line| line == expected),
+                "missing {expected}"
+            );
+        }
+    }
 }
