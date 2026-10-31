@@ -554,7 +554,7 @@ fn parse_range_transition_def(pair: pest::iterators::Pair<Rule>) -> Result<State
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::names => names_list.push(parse_names(inner)?),
-            Rule::mls_range_def => mls_range = inner.as_str().to_string(),
+            Rule::mls_range_def => mls_range = inner.as_str().trim().to_string(),
             _ => {}
         }
     }
@@ -632,7 +632,8 @@ fn parse_security_context(
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::IDENTIFIER => identifiers.push(inner.as_str().to_string()),
-            Rule::mls_range_def => level = Some(inner.as_str().to_string()),
+            // The span can include whitespace after the range; trim it.
+            Rule::mls_range_def => level = Some(inner.as_str().trim().to_string()),
             _ => {}
         }
     }
