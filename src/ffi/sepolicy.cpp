@@ -558,22 +558,35 @@ bool SePolicyImpl::add_xperm_rule(rust::Str s, rust::Str t, rust::Str c,
     return node;
   };
 
-  if (ioctl_driver(xp.low) != ioctl_driver(xp.high)) {
-    // Range spans multiple drivers - use driver node
-    if (!driver_node)
-      driver_node = new_node(AVTAB_XPERMS_IOCTLDRIVER, 0);
-    for (int i = ioctl_driver(xp.low); i <= ioctl_driver(xp.high); ++i)
-      xperm_set(i, driver_node->datum.xperms->perms);
-  } else {
-    // Single driver - use function node
-    uint8_t driver = ioctl_driver(xp.low);
+  auto set_functions = [&](uint8_t driver, int low, int high) {
     auto node = node_list[driver];
     if (!node) {
       node = new_node(AVTAB_XPERMS_IOCTLFUNCTION, driver);
       node_list[driver] = node;
     }
-    for (int i = ioctl_func(xp.low); i <= ioctl_func(xp.high); ++i)
+    for (int i = low; i <= high; ++i)
       xperm_set(i, node->datum.xperms->perms);
+  };
+
+  int low_driver = ioctl_driver(xp.low);
+  int high_driver = ioctl_driver(xp.high);
+  if (low_driver == high_driver) {
+    set_functions(low_driver, ioctl_func(xp.low), ioctl_func(xp.high));
+  } else {
+    // Drivers the range covers completely go in the driver node. A driver it
+    // covers only partly, at either end, gets just those functions; setting
+    // the whole driver would allow ioctls the rule never listed.
+    for (int driver = low_driver; driver <= high_driver; ++driver) {
+      int first = driver == low_driver ? ioctl_func(xp.low) : 0x00;
+      int last = driver == high_driver ? ioctl_func(xp.high) : 0xff;
+      if (first == 0x00 && last == 0xff) {
+        if (!driver_node)
+          driver_node = new_node(AVTAB_XPERMS_IOCTLDRIVER, 0);
+        xperm_set(driver, driver_node->datum.xperms->perms);
+      } else {
+        set_functions(driver, first, last);
+      }
+    }
   }
 
 #undef driver_node
