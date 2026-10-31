@@ -64,7 +64,7 @@ NUMBER = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)* }
 HEX_NUMBER = @{ "0x" ~ ASCII_HEX_DIGIT+ }
 
 // Path: starts with / followed by path characters
-PATH = @{ "/" ~ (ASCII_ALPHANUMERIC | ")" | "_" | "." | "*" | "/" | "$")* }
+PATH = @{ "/" ~ (!(" " | "\t" | "\r" | "\n") ~ ANY)* }
 
 // IPv6 address
 IPV6_ADDR = @{
