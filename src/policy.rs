@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::pin::Pin;
 
@@ -406,51 +407,179 @@ impl SePolicy {
     }
 
     fn apply_avrule(&mut self, rule: &AVRule) {
-        let src: Vec<&str> = rule.src_types.ids.iter().map(|s| s.as_str()).collect();
-        let tgt: Vec<&str> = rule.tgt_types.ids.iter().map(|s| s.as_str()).collect();
-        let cls: Vec<&str> = rule.obj_classes.ids.iter().map(|s| s.as_str()).collect();
-        let perm: Vec<&str> = rule.perms.ids.iter().map(|s| s.as_str()).collect();
-
-        match rule.rule_type {
-            AVRuleType::Allow => self.allow(&src, &tgt, &cls, &perm),
-            AVRuleType::Dontaudit => self.dontaudit(&src, &tgt, &cls, &perm),
-            AVRuleType::Auditallow => self.auditallow(&src, &tgt, &cls, &perm),
-            AVRuleType::Neverallow => {}
+        if rule.rule_type == AVRuleType::Neverallow {
+            return;
+        }
+        let pairs = self.resolve_pairs(&rule.src_types, &rule.tgt_types);
+        for cls in self.resolve_classes(&rule.obj_classes) {
+            let perms = self.resolve_perms(&cls, &rule.perms);
+            let (cls, perms) = ([cls.as_str()], strs(&perms));
+            for (src, tgt) in &pairs {
+                let (src, tgt) = (strs(src), strs(tgt));
+                match rule.rule_type {
+                    AVRuleType::Allow => self.allow(&src, &tgt, &cls, &perms),
+                    AVRuleType::Dontaudit => self.dontaudit(&src, &tgt, &cls, &perms),
+                    AVRuleType::Auditallow => self.auditallow(&src, &tgt, &cls, &perms),
+                    AVRuleType::Neverallow => {}
+                }
+            }
         }
     }
 
     fn apply_avxrule(&mut self, rule: &AVXRule) {
-        let src: Vec<&str> = rule.src_types.ids.iter().map(|s| s.as_str()).collect();
-        let tgt: Vec<&str> = rule.tgt_types.ids.iter().map(|s| s.as_str()).collect();
-        let cls: Vec<&str> = rule.obj_classes.ids.iter().map(|s| s.as_str()).collect();
-
-        match rule.rule_type {
-            AVRuleType::Allow => self.allowxperm(&src, &tgt, &cls, &rule.xperms),
-            AVRuleType::Dontaudit => self.dontauditxperm(&src, &tgt, &cls, &rule.xperms),
-            AVRuleType::Auditallow => self.auditallowxperm(&src, &tgt, &cls, &rule.xperms),
-            AVRuleType::Neverallow => {}
+        if rule.rule_type == AVRuleType::Neverallow {
+            return;
+        }
+        let pairs = self.resolve_pairs(&rule.src_types, &rule.tgt_types);
+        let classes = self.resolve_classes(&rule.obj_classes);
+        let cls = strs(&classes);
+        for (src, tgt) in &pairs {
+            let (src, tgt) = (strs(src), strs(tgt));
+            match rule.rule_type {
+                AVRuleType::Allow => self.allowxperm(&src, &tgt, &cls, &rule.xperms),
+                AVRuleType::Dontaudit => self.dontauditxperm(&src, &tgt, &cls, &rule.xperms),
+                AVRuleType::Auditallow => self.auditallowxperm(&src, &tgt, &cls, &rule.xperms),
+                AVRuleType::Neverallow => {}
+            }
         }
     }
 
     fn apply_typerule(&mut self, rule: &TypeRule) {
-        // Type rules need to be expanded for each src/tgt/cls combination
-        for src in &rule.src_types.ids {
-            for tgt in &rule.tgt_types.ids {
-                for cls in &rule.obj_classes.ids {
-                    let obj = rule.file_name.as_deref().unwrap_or("");
-                    match rule.rule_type {
-                        TypeRuleType::TypeTransition => {
-                            self.type_transition(src, tgt, cls, &rule.dest_type, obj)
-                        }
-                        TypeRuleType::TypeChange => {
-                            self.type_change(src, tgt, cls, &rule.dest_type)
-                        }
-                        TypeRuleType::TypeMember => {
-                            self.type_member(src, tgt, cls, &rule.dest_type)
+        let obj = rule.file_name.as_deref().unwrap_or("");
+        let pairs = self.resolve_pairs(&rule.src_types, &rule.tgt_types);
+        for cls in self.resolve_classes(&rule.obj_classes) {
+            for (sources, targets) in &pairs {
+                for src in sources {
+                    for tgt in targets {
+                        match rule.rule_type {
+                            TypeRuleType::TypeTransition => {
+                                self.type_transition(src, tgt, &cls, &rule.dest_type, obj)
+                            }
+                            TypeRuleType::TypeChange => {
+                                self.type_change(src, tgt, &cls, &rule.dest_type)
+                            }
+                            TypeRuleType::TypeMember => {
+                                self.type_member(src, tgt, &cls, &rule.dest_type)
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Source and target groups a rule applies to. A `self` target pairs
+    /// each source type with itself; attributes in the source are expanded
+    /// so every member gets its own rule, as checkpolicy does.
+    fn resolve_pairs(&self, src: &IdSet, tgt: &IdSet) -> Vec<(Vec<String>, Vec<String>)> {
+        let mut others = tgt.clone();
+        let has_self = others.ids.remove("self");
+
+        let mut pairs = Vec::new();
+        if !others.ids.is_empty() || others.complement {
+            pairs.push((self.resolve_types(src), self.resolve_types(&others)));
+        }
+        if has_self {
+            let sources = self.concrete_types(src);
+            let names = self.type_names(&sources);
+            pairs.extend(
+                names
+                    .into_iter()
+                    .map(|name| (vec![name.clone()], vec![name])),
+            );
+        }
+        pairs
+    }
+
+    /// The names a type set applies to. A plain list of types and attributes
+    /// is used as written, keeping attribute rules intact; a set with `*`, a
+    /// `-type` exclusion or a `~` complement expands to concrete types.
+    fn resolve_types(&self, set: &IdSet) -> Vec<String> {
+        let plain = !set.complement && set.iter().all(|id| id != "*" && !id.starts_with('-'));
+        if plain {
+            return set.iter().cloned().collect();
+        }
+        let values = self.concrete_types(set);
+        self.type_names(&values)
+    }
+
+    /// The concrete types in a set: members of its attributes and `*`, minus
+    /// excluded `-names`, complemented against all types when the set is `~`.
+    fn concrete_types(&self, set: &IdSet) -> BTreeSet<u32> {
+        self.with(|p| {
+            let expand = |name: &str, out: &mut BTreeSet<u32>| {
+                let mut values = Vec::new();
+                if name == "*" {
+                    p.type_values(&mut values);
+                } else {
+                    match p.type_value(name) {
+                        0 => warn!(name, "Ignoring unknown type in type set"),
+                        value if p.is_attribute(value) => p.attribute_members(value, &mut values),
+                        value => values.push(value),
+                    }
+                }
+                out.extend(values);
+            };
+
+            let mut included = BTreeSet::new();
+            let mut excluded = BTreeSet::new();
+            for id in set.iter() {
+                match id.strip_prefix('-') {
+                    Some(name) => expand(name, &mut excluded),
+                    None => expand(id, &mut included),
+                }
+            }
+            let selected: BTreeSet<u32> = included.difference(&excluded).copied().collect();
+
+            if set.complement {
+                let mut all = Vec::new();
+                p.type_values(&mut all);
+                all.into_iter()
+                    .filter(|value| !selected.contains(value))
+                    .collect()
+            } else {
+                selected
+            }
+        })
+    }
+
+    fn type_names(&self, values: &BTreeSet<u32>) -> Vec<String> {
+        let names = self.names();
+        values
+            .iter()
+            .filter_map(|&value| rules::name(names.type_name_bytes(value)).map(Cow::into_owned))
+            .collect()
+    }
+
+    /// Classes as written; `*` and `~` class sets are not supported.
+    fn resolve_classes(&self, set: &IdSet) -> Vec<String> {
+        if set.complement || set.iter().any(|id| id == "*") {
+            warn!(classes = ?set, "Skipping rule with an unsupported class set");
+            return Vec::new();
+        }
+        set.iter().cloned().collect()
+    }
+
+    /// The permissions a set names in `class`: `*` is every permission of the
+    /// class and `~{ ... }` every permission except those listed.
+    fn resolve_perms(&self, class: &str, set: &IdSet) -> Vec<String> {
+        let star = set.iter().any(|id| id == "*");
+        if !set.complement && !star {
+            return set.iter().cloned().collect();
+        }
+        let all: Vec<String> = self.with(|p| {
+            let class_value = p.class_value(class);
+            (0..32)
+                .filter_map(|bit| rules::name(p.perm_name_bytes(class_value, bit)))
+                .map(Cow::into_owned)
+                .collect()
+        });
+        if set.complement {
+            all.into_iter()
+                .filter(|perm| !set.ids.contains(perm))
+                .collect()
+        } else {
+            all
         }
     }
 
@@ -489,6 +618,10 @@ fn render(value: &impl std::fmt::Display) -> String {
     let mut out = String::with_capacity(96);
     write!(out, "{value}").expect("formatting into a String cannot fail");
     out
+}
+
+fn strs(values: &[String]) -> Vec<&str> {
+    values.iter().map(String::as_str).collect()
 }
 
 impl Drop for SePolicy {
@@ -1131,5 +1264,130 @@ mod tests {
                 .genfs_contexts()
                 .contains(&"genfscon sysfs /q/gft -d u:object_r:q_gft_dir_t:s0".to_string())
         );
+    }
+
+    /// Whether `src` may use `perm` on `tgt`'s `class`, per the av rules.
+    fn allows(sepolicy: &SePolicy, src: &str, tgt: &str, class: &str, perm: &str) -> bool {
+        sepolicy.av_rules().any(|rule| {
+            rule.kind == rules::AvRuleKind::Allow
+                && rule.source == src
+                && rule.target == tgt
+                && rule.class == class
+                && rule.perms().any(|p| p == perm)
+        })
+    }
+
+    #[test]
+    fn test_self_target_applies_to_each_source_type() {
+        let sepolicy = patched(
+            "attribute q_self_attr;\ntype q_self_a_t, q_self_attr;\ntype q_self_b_t, q_self_attr;\n\
+             type q_self_c_t;\nallow q_self_c_t self:process fork;\nallow q_self_attr self:process sigchld;",
+        );
+
+        assert!(allows(
+            &sepolicy,
+            "q_self_c_t",
+            "q_self_c_t",
+            "process",
+            "fork"
+        ));
+        // An attribute source gives each member a rule to itself only.
+        assert!(allows(
+            &sepolicy,
+            "q_self_a_t",
+            "q_self_a_t",
+            "process",
+            "sigchld"
+        ));
+        assert!(allows(
+            &sepolicy,
+            "q_self_b_t",
+            "q_self_b_t",
+            "process",
+            "sigchld"
+        ));
+        assert!(!allows(
+            &sepolicy,
+            "q_self_a_t",
+            "q_self_b_t",
+            "process",
+            "sigchld"
+        ));
+    }
+
+    #[test]
+    fn test_excluded_types_are_not_granted() {
+        let sepolicy = patched(
+            "attribute q_ex_attr;\ntype q_ex_a_t, q_ex_attr;\ntype q_ex_b_t, q_ex_attr;\ntype q_ex_tgt_t;\n\
+             allow { q_ex_attr -q_ex_b_t } q_ex_tgt_t:process fork;",
+        );
+
+        assert!(allows(
+            &sepolicy,
+            "q_ex_a_t",
+            "q_ex_tgt_t",
+            "process",
+            "fork"
+        ));
+        assert!(!allows(
+            &sepolicy,
+            "q_ex_b_t",
+            "q_ex_tgt_t",
+            "process",
+            "fork"
+        ));
+        assert!(!allows(
+            &sepolicy,
+            "q_ex_attr",
+            "q_ex_tgt_t",
+            "process",
+            "fork"
+        ));
+    }
+
+    #[test]
+    fn test_complemented_types_grant_everything_else() {
+        let sepolicy = patched(
+            "type q_cp_a_t;\ntype q_cp_tgt_t;\nallow ~{ q_cp_a_t q_cp_tgt_t } q_cp_tgt_t:process fork;",
+        );
+
+        assert!(allows(&sepolicy, "init", "q_cp_tgt_t", "process", "fork"));
+        assert!(allows(&sepolicy, "vold", "q_cp_tgt_t", "process", "fork"));
+        assert!(!allows(
+            &sepolicy,
+            "q_cp_a_t",
+            "q_cp_tgt_t",
+            "process",
+            "fork"
+        ));
+    }
+
+    #[test]
+    fn test_permission_wildcard_and_complement() {
+        let sepolicy = patched(
+            "type q_pw_src_t;\ntype q_pw_tgt_t;\ntype q_pc_src_t;\n\
+             allow q_pw_src_t q_pw_tgt_t:process *;\nallow q_pc_src_t q_pw_tgt_t:process ~{ fork };",
+        );
+
+        for perm in ["fork", "sigchld", "ptrace", "transition"] {
+            assert!(
+                allows(&sepolicy, "q_pw_src_t", "q_pw_tgt_t", "process", perm),
+                "* should include {perm}"
+            );
+        }
+        assert!(!allows(
+            &sepolicy,
+            "q_pc_src_t",
+            "q_pw_tgt_t",
+            "process",
+            "fork"
+        ));
+        assert!(allows(
+            &sepolicy,
+            "q_pc_src_t",
+            "q_pw_tgt_t",
+            "process",
+            "sigchld"
+        ));
     }
 }

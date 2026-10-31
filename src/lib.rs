@@ -180,6 +180,14 @@ mod ffi {
         fn class_name_bytes(self: &SePolicyImpl, value: u32) -> &[u8];
         fn perm_name_bytes(self: &SePolicyImpl, class_value: u32, bit: u32) -> &[u8];
 
+        // Type and class lookups for resolving type and permission sets; 0
+        // when the name is unknown.
+        fn type_value(self: &SePolicyImpl, name: &str) -> u32;
+        fn is_attribute(self: &SePolicyImpl, value: u32) -> bool;
+        fn attribute_members(self: &SePolicyImpl, value: u32, out: &mut Vec<u32>);
+        fn type_values(self: &SePolicyImpl, out: &mut Vec<u32>);
+        fn class_value(self: &SePolicyImpl, name: &str) -> u32;
+
         // Bulk extraction of rule records, with names left as values.
         fn attribute_entries(self: &SePolicyImpl, out: &mut Vec<u32>);
         fn type_entries(self: &SePolicyImpl, out: &mut Vec<TypeEntry>, attrs: &mut Vec<u32>);
