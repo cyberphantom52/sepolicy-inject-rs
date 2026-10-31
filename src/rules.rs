@@ -211,6 +211,17 @@ impl Ioctls {
         }
     }
 
+    /// Whether the set includes `ioctl`: its driver is listed whole, or the
+    /// set lists functions within that driver and includes this one.
+    pub fn covers(&self, ioctl: u16) -> bool {
+        let [driver, function] = ioctl.to_be_bytes();
+        if self.function {
+            driver == self.driver && self.contains_low_byte(function)
+        } else {
+            self.contains_low_byte(driver)
+        }
+    }
+
     /// Inclusive ranges of ioctl numbers. A driver-level set yields each
     /// driver as `driver << 8`.
     pub fn ranges(&self) -> impl Iterator<Item = (u16, u16)> + '_ {

@@ -1041,4 +1041,24 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_xperm_range_across_drivers_grants_only_its_ioctls() {
+        let sepolicy = patched(
+            "type q_xd_src_t;\ntype q_xd_tgt_t;\nallowxperm q_xd_src_t q_xd_tgt_t:unix_stream_socket ioctl 0x5401-0x5602;",
+        );
+
+        let rules: Vec<_> = sepolicy
+            .xperm_rules()
+            .filter(|rule| rule.source == "q_xd_src_t")
+            .collect();
+        let allowed = |ioctl: u16| rules.iter().any(|rule| rule.ioctls.covers(ioctl));
+
+        for ioctl in [0x5401, 0x54ff, 0x5500, 0x55ab, 0x55ff, 0x5600, 0x5602] {
+            assert!(allowed(ioctl), "0x{ioctl:04x} should be allowed");
+        }
+        for ioctl in [0x5400, 0x5603, 0x56ff, 0x5300, 0x5700] {
+            assert!(!allowed(ioctl), "0x{ioctl:04x} should not be allowed");
+        }
+    }
 }
