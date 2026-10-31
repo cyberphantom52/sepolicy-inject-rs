@@ -1066,14 +1066,18 @@ mod tests {
     fn test_genfscon_keeps_longest_paths_first() {
         // The kernel uses the first genfs entry whose path is a prefix of the
         // file's path, so a short path inserted first would shadow longer ones.
-        let sepolicy = patched("type q_genfs_short_t;\ngenfscon sysfs /devices u:object_r:q_genfs_short_t:s0");
+        let sepolicy =
+            patched("type q_genfs_short_t;\ngenfscon sysfs /devices u:object_r:q_genfs_short_t:s0");
 
         let lengths: Vec<usize> = sepolicy
             .genfs()
             .filter(|genfs| genfs.fs == "sysfs")
             .map(|genfs| genfs.path.len())
             .collect();
-        assert!(lengths.len() > 2, "fixture should have several sysfs entries");
+        assert!(
+            lengths.len() > 2,
+            "fixture should have several sysfs entries"
+        );
         assert!(
             lengths.windows(2).all(|pair| pair[0] >= pair[1]),
             "sysfs entries should be ordered longest path first"
