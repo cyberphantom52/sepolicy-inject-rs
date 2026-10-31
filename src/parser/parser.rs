@@ -552,15 +552,16 @@ fn parse_permissive(pair: pest::iterators::Pair<Rule>) -> Result<Statement, Pars
 
 fn parse_range_transition_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseError> {
     let mut names_list: Vec<IdSet> = Vec::new();
-    let mut mls_range = String::new();
+    let mut mls_range = None;
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::names => names_list.push(parse_names(inner)?),
-            Rule::mls_range_def => mls_range = inner.as_str().trim().to_string(),
+            Rule::mls_range_def => mls_range = Some(parse_mls_range(inner)),
             _ => {}
         }
     }
+    let mls_range = mls_range.ok_or(ParseError::UnexpectedRule(Rule::range_transition_def))?;
 
     Ok(Statement::RangeTransition(RangeTransition {
         src_types: names_list.first().cloned().unwrap_or_default(),
@@ -626,6 +627,36 @@ fn parse_initial_sid(pair: pest::iterators::Pair<Rule>) -> Result<Statement, Par
     Ok(Statement::InitialSid(InitialSid { name, context }))
 }
 
+fn parse_mls_range(pair: pest::iterators::Pair<Rule>) -> MlsRange {
+    let mut levels = pair
+        .into_inner()
+        .filter(|inner| inner.as_rule() == Rule::mls_level_def)
+        .map(parse_mls_level);
+    MlsRange {
+        low: levels.next().expect("grammar requires a low level"),
+        high: levels.next(),
+    }
+}
+
+fn parse_mls_level(pair: pest::iterators::Pair<Rule>) -> MlsLevel {
+    let mut inner = pair.into_inner();
+    let sensitivity = inner.next().expect("grammar requires a sensitivity");
+    let categories = inner
+        .map(|category| {
+            let mut names = category.into_inner().map(|name| name.as_str().to_string());
+            let low = names.next().expect("grammar requires a category");
+            match names.next() {
+                Some(high) => MlsCategory::Range(low, high),
+                None => MlsCategory::Single(low),
+            }
+        })
+        .collect();
+    MlsLevel {
+        sensitivity: sensitivity.as_str().to_string(),
+        categories,
+    }
+}
+
 fn parse_security_context(
     pair: pest::iterators::Pair<Rule>,
 ) -> Result<SecurityContext, ParseError> {
@@ -635,8 +666,7 @@ fn parse_security_context(
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::IDENTIFIER => identifiers.push(inner.as_str().to_string()),
-            // The span can include whitespace after the range; trim it.
-            Rule::mls_range_def => level = Some(inner.as_str().trim().to_string()),
+            Rule::mls_range_def => level = Some(parse_mls_range(inner)),
             _ => {}
         }
     }
@@ -1362,6 +1392,101 @@ allow my_type_t self:file read;
                 matches!(parse(input), Err(ParseError::InvalidGenfsFileType(_))),
                 "{input} should be rejected"
             );
+        }
+    }
+
+    fn context_level(input: &str) -> MlsRange {
+        let policy = parse(input).expect("parse failed");
+        if let Statement::GenfsContext(g) = &policy.statements[0] {
+            g.context
+                .level
+                .clone()
+                .expect("context should have a level")
+        } else {
+            panic!("Expected GenfsContext");
+        }
+    }
+
+    fn level(sensitivity: &str, categories: Vec<MlsCategory>) -> MlsLevel {
+        MlsLevel {
+            sensitivity: sensitivity.to_string(),
+            categories,
+        }
+    }
+
+    fn single(name: &str) -> MlsCategory {
+        MlsCategory::Single(name.to_string())
+    }
+
+    #[test]
+    fn test_parse_mls_levels() {
+        assert_eq!(
+            context_level("genfscon proc /x u:object_r:t:s0"),
+            MlsRange {
+                low: level("s0", vec![]),
+                high: None,
+            }
+        );
+
+        // AOSP writes ranges both spaced and unspaced.
+        let full = MlsRange {
+            low: level("s0", vec![]),
+            high: Some(level(
+                "s0",
+                vec![MlsCategory::Range("c0".to_string(), "c1023".to_string())],
+            )),
+        };
+        assert_eq!(
+            context_level("genfscon proc /x u:object_r:t:s0-s0:c0.c1023"),
+            full
+        );
+        assert_eq!(
+            context_level("genfscon proc /x u:object_r:t:s0 - s0:c0.c1023"),
+            full
+        );
+        assert_eq!(full.to_string(), "s0-s0:c0.c1023");
+
+        let mixed = context_level("genfscon proc /x u:object_r:t:s0:c0,c5.c7-s0:c1");
+        assert_eq!(
+            mixed,
+            MlsRange {
+                low: level(
+                    "s0",
+                    vec![
+                        single("c0"),
+                        MlsCategory::Range("c5".to_string(), "c7".to_string())
+                    ]
+                ),
+                high: Some(level("s0", vec![single("c1")])),
+            }
+        );
+        assert_eq!(mixed.to_string(), "s0:c0,c5.c7-s0:c1");
+    }
+
+    #[test]
+    fn test_parse_category_list_ends_before_next_statement() {
+        // A space-separated category list once ran into the next line.
+        let policy = parse(
+            "genfscon proc /a u:object_r:a_t:s0:c0.c2\ngenfscon proc /b u:object_r:b_t:s0:c1,c2\n",
+        )
+        .expect("parse failed");
+        assert_eq!(policy.statements.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_range_transition_ranges() {
+        for (input, class) in [
+            ("range_transition a_t b_exec:process s0 - s0:c0.c3;", true),
+            ("range_transition a_t b_exec s0-s0:c1;", false),
+        ] {
+            let policy = parse(input).expect("parse failed");
+            if let Statement::RangeTransition(rt) = &policy.statements[0] {
+                assert_eq!(rt.obj_classes.is_some(), class, "{input}");
+                assert_eq!(rt.mls_range.low, level("s0", vec![]), "{input}");
+                assert!(rt.mls_range.high.is_some(), "{input}");
+            } else {
+                panic!("Expected RangeTransition for {input}");
+            }
         }
     }
 }

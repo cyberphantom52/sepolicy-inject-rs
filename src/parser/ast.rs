@@ -232,7 +232,7 @@ pub struct RangeTransition {
     pub src_types: IdSet,
     pub tgt_types: IdSet,
     pub obj_classes: Option<IdSet>,
-    pub mls_range: String,
+    pub mls_range: MlsRange,
 }
 
 /// Role transition.
@@ -249,7 +249,58 @@ pub struct SecurityContext {
     pub user: String,
     pub role: String,
     pub type_name: String,
-    pub level: Option<String>,
+    pub level: Option<MlsRange>,
+}
+
+/// An MLS range as written: a low level and, for a range, a high level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MlsRange {
+    pub low: MlsLevel,
+    pub high: Option<MlsLevel>,
+}
+
+/// An MLS level: a sensitivity and its categories.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MlsLevel {
+    pub sensitivity: String,
+    pub categories: Vec<MlsCategory>,
+}
+
+/// A category, or a `low.high` range of categories.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MlsCategory {
+    Single(String),
+    Range(String, String),
+}
+
+impl std::fmt::Display for MlsRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.low)?;
+        if let Some(high) = &self.high {
+            write!(f, "-{high}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for MlsLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.sensitivity)?;
+        for (i, category) in self.categories.iter().enumerate() {
+            f.write_str(if i == 0 { ":" } else { "," })?;
+            write!(f, "{category}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for MlsCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MlsCategory::Single(name) => f.write_str(name),
+            MlsCategory::Range(low, high) => write!(f, "{low}.{high}"),
+        }
+    }
 }
 
 /// Initial SID definition.

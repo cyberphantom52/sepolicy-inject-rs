@@ -390,20 +390,20 @@ mod tests {
         let mls = "(category c0)\n(category c1)\n(category c2)\n(categoryorder (c0 c1 c2))\n\
                    (sensitivitycategory s0 (range c0 c2))\n(user mls_u)\n(userrole mls_u object_r)\n\
                    (userlevel mls_u (s0))\n(userrange mls_u ((s0) (s0 (range c0 c2))))";
+        // One multi-line patch: a category list once ran into the next line.
+        let patch = crate::parser::parse(
+            "genfscon sysfs /mls/single mls_u:object_r:test_t:s0\n\
+             genfscon sysfs /mls/range mls_u:object_r:test_t:s0-s0:c0.c2\n\
+             genfscon sysfs /mls/list mls_u:object_r:test_t:s0:c0,c1",
+        )
+        .expect("failed to parse TE patch");
+
         let mut policy = CilPolicy::from_file(&source)
             .expect("failed to load base CIL fixture")
             .add_file(mls)
-            .expect("failed to add MLS declarations");
-        for statement in [
-            "genfscon sysfs /mls/single mls_u:object_r:test_t:s0",
-            "genfscon sysfs /mls/range mls_u:object_r:test_t:s0-s0:c0.c2",
-            "genfscon sysfs /mls/list mls_u:object_r:test_t:s0:c0,c1",
-        ] {
-            let patch = crate::parser::parse(statement).expect("failed to parse TE patch");
-            policy = policy
-                .add_policy(&patch)
-                .expect("failed to apply TE patch to CIL");
-        }
+            .expect("failed to add MLS declarations")
+            .add_policy(&patch)
+            .expect("failed to apply TE patch to CIL");
 
         policy.validate().expect("rendered contexts should resolve");
         let genfs = policy

@@ -161,7 +161,7 @@ bool_def = { ^"bool" ~ IDENTIFIER ~ bool_value ~ ";"+ }
 
 bool_value = @{ ^"true" | ^"false" }
 
-range_transition_def = { ^"range_transition" ~ names ~ names ~ ((":" ~ names ~ mls_range_def) | names) ~ ";"+ }
+range_transition_def = { ^"range_transition" ~ names ~ names ~ (":" ~ names)? ~ mls_range_def ~ ";"+ }
 
 role_transition_def = { ^"role_transition" ~ names ~ names ~ names ~ ";"+ }
 
@@ -173,7 +173,13 @@ security_context = { IDENTIFIER ~ ":" ~ IDENTIFIER ~ ":" ~ IDENTIFIER ~ (":" ~ m
 
 mls_range_def = { mls_level_def ~ (MINUS ~ mls_level_def)? }
 
-mls_level_def = { IDENTIFIER ~ (":" ~ comma_list)? }
+// Levels use their own names: IDENTIFIER allows - and ., which would swallow
+// a range's "-" and a category range's ".". Categories are comma-separated,
+// so a level ends at its last category rather than running into the next
+// statement.
+mls_level_def = { MLS_NAME ~ (":" ~ mls_category ~ ("," ~ mls_category)*)? }
+mls_category = ${ MLS_NAME ~ ("." ~ MLS_NAME)? }
+MLS_NAME = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 initial_sid = {
     ^"sid" ~ IDENTIFIER ~ security_context
