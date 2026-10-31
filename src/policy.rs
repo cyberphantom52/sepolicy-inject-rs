@@ -198,7 +198,20 @@ impl SePolicy {
     }
 
     pub fn genfscon(&mut self, fs: &str, path: &str, context: &str) {
-        self.with_mut(|p| p.genfscon(fs, path, context));
+        self.genfscon_with_type(fs, path, None, context);
+    }
+
+    /// Add or update a genfscon entry limited to `file_type`; `None` applies
+    /// to every file type.
+    pub fn genfscon_with_type(
+        &mut self,
+        fs: &str,
+        path: &str,
+        file_type: Option<GenfsFileType>,
+        context: &str,
+    ) {
+        let class = file_type.map_or("", GenfsFileType::class);
+        self.with_mut(|p| p.genfscon(fs, path, class, context));
     }
 
     /// Attribute names, in policy order.
@@ -285,10 +298,14 @@ impl SePolicy {
     pub fn genfs(&self) -> impl Iterator<Item = Genfs<'_>> + '_ {
         let mut entries = Vec::new();
         self.with(|p| p.genfs_entries(&mut entries));
-        entries.into_iter().filter_map(|entry| {
+        let names = self.names();
+        entries.into_iter().filter_map(move |entry| {
+            let file_type = rules::name(names.class_name_bytes(entry.class_))
+                .and_then(|class| GenfsFileType::from_class(&class));
             Some(Genfs {
                 fs: rules::name(entry.fs)?,
                 path: rules::name(entry.path)?,
+                file_type,
                 context: entry.context,
             })
         })
@@ -460,7 +477,7 @@ impl SePolicy {
                 .map(|l| format!(":{}", l))
                 .unwrap_or_default()
         );
-        self.genfscon(&g.filesystem, &g.path, &ctx);
+        self.genfscon_with_type(&g.filesystem, &g.path, g.file_type, &ctx);
     }
 }
 
@@ -1081,6 +1098,38 @@ mod tests {
         assert!(
             lengths.windows(2).all(|pair| pair[0] >= pair[1]),
             "sysfs entries should be ordered longest path first"
+        );
+    }
+
+    #[test]
+    fn test_genfscon_file_type_is_applied() {
+        // The class-specific entry must precede the generic one for its path,
+        // or lookup would always stop at the generic entry.
+        let sepolicy = patched(
+            "type q_gft_any_t;\ntype q_gft_dir_t;\n\
+             genfscon sysfs /q/gft u:object_r:q_gft_any_t:s0\n\
+             genfscon sysfs /q/gft -d u:object_r:q_gft_dir_t:s0",
+        );
+
+        let entries: Vec<_> = sepolicy
+            .genfs()
+            .filter(|genfs| genfs.path == "/q/gft")
+            .map(|genfs| (genfs.file_type, genfs.context.clone()))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                (
+                    Some(GenfsFileType::Dir),
+                    "u:object_r:q_gft_dir_t:s0".to_string()
+                ),
+                (None, "u:object_r:q_gft_any_t:s0".to_string()),
+            ]
+        );
+        assert!(
+            sepolicy
+                .genfs_contexts()
+                .contains(&"genfscon sysfs /q/gft -d u:object_r:q_gft_dir_t:s0".to_string())
         );
     }
 }

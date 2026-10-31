@@ -264,8 +264,83 @@ pub struct InitialSid {
 pub struct GenfsContext {
     pub filesystem: String,
     pub path: String,
-    pub file_type: Option<String>,
+    /// The file type the entry is limited to; `None` applies to all.
+    pub file_type: Option<GenfsFileType>,
     pub context: SecurityContext,
+}
+
+/// The file type a genfscon entry can be limited to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenfsFileType {
+    Block,
+    Char,
+    Dir,
+    Pipe,
+    Symlink,
+    Socket,
+    File,
+}
+
+impl GenfsFileType {
+    const ALL: [GenfsFileType; 7] = [
+        GenfsFileType::Block,
+        GenfsFileType::Char,
+        GenfsFileType::Dir,
+        GenfsFileType::Pipe,
+        GenfsFileType::Symlink,
+        GenfsFileType::Socket,
+        GenfsFileType::File,
+    ];
+
+    /// checkpolicy's one-character type, as in `genfscon proc /x -d ...`;
+    /// `-` (written `- -`) is a regular file.
+    pub fn from_checkpolicy(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|ty| value.len() == 1 && value.starts_with(ty.as_checkpolicy()))
+    }
+
+    pub fn as_checkpolicy(self) -> char {
+        match self {
+            GenfsFileType::Block => 'b',
+            GenfsFileType::Char => 'c',
+            GenfsFileType::Dir => 'd',
+            GenfsFileType::Pipe => 'p',
+            GenfsFileType::Symlink => 'l',
+            GenfsFileType::Socket => 's',
+            GenfsFileType::File => '-',
+        }
+    }
+
+    /// The security class the entry applies to.
+    pub fn class(self) -> &'static str {
+        match self {
+            GenfsFileType::Block => "blk_file",
+            GenfsFileType::Char => "chr_file",
+            GenfsFileType::Dir => "dir",
+            GenfsFileType::Pipe => "fifo_file",
+            GenfsFileType::Symlink => "lnk_file",
+            GenfsFileType::Socket => "sock_file",
+            GenfsFileType::File => "file",
+        }
+    }
+
+    pub fn from_class(class: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|ty| ty.class() == class)
+    }
+
+    /// The CIL keyword for the type.
+    pub fn cil_keyword(self) -> &'static str {
+        match self {
+            GenfsFileType::Block => "block",
+            GenfsFileType::Char => "char",
+            GenfsFileType::Dir => "dir",
+            GenfsFileType::Pipe => "pipe",
+            GenfsFileType::Symlink => "symlink",
+            GenfsFileType::Socket => "socket",
+            GenfsFileType::File => "file",
+        }
+    }
 }
 
 /// Filesystem use types.

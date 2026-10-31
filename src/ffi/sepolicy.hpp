@@ -66,7 +66,8 @@ class SePolicyImpl {
                      int effect);
   bool add_filename_trans(rust::Str s, rust::Str t, rust::Str c, rust::Str d,
                           rust::Str o);
-  bool add_genfscon(rust::Str fs_name, rust::Str path, rust::Str context);
+  bool add_genfscon(rust::Str fs_name, rust::Str path, rust::Str class_name,
+                    rust::Str context);
   bool add_type(rust::Str type_name, uint32_t flavor);
   bool set_type_state(rust::Str type_name, bool permissive);
   bool add_typeattribute(rust::Str type, rust::Str attr);
@@ -118,7 +119,8 @@ public:
                    rust::Str dest) noexcept;
   void type_member(rust::Str src, rust::Str tgt, rust::Str cls,
                    rust::Str dest) noexcept;
-  void genfscon(rust::Str fs, rust::Str path, rust::Str context) noexcept;
+  void genfscon(rust::Str fs, rust::Str path, rust::Str class_name,
+                rust::Str context) noexcept;
 
   // Names borrowed from the policydb; empty if the value has no name.
   rust::Slice<const uint8_t> type_name_bytes(uint32_t value) const noexcept;

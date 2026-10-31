@@ -159,6 +159,7 @@ impl CilPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::ast::GenfsFileType;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -420,5 +421,33 @@ mod tests {
                 "missing {expected:?} in {genfs:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_genfscon_file_types_render_as_cil_keywords() {
+        let source = cil_fixture_path("test_handle.cil");
+        let classes =
+            "(class dir (getattr))\n(class file (getattr))\n(classorder (test_class dir file))";
+        let patch = crate::parser::parse(
+            "genfscon sysfs /typed/dir -d system_u:object_r:test_t:s0\n\
+             genfscon sysfs /typed/file - - system_u:object_r:test_t:s0",
+        )
+        .expect("failed to parse TE patch");
+
+        let mut policy = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .add_file(classes)
+            .expect("failed to add classes")
+            .add_policy(&patch)
+            .expect("failed to apply TE patch to CIL");
+
+        let compiled = policy.compile().expect("typed genfscon should compile");
+        let types: Vec<_> = compiled
+            .genfs()
+            .filter(|genfs| genfs.path.starts_with("/typed/"))
+            .map(|genfs| (genfs.path.into_owned(), genfs.file_type))
+            .collect();
+        assert!(types.contains(&("/typed/dir".to_string(), Some(GenfsFileType::Dir))));
+        assert!(types.contains(&("/typed/file".to_string(), Some(GenfsFileType::File))));
     }
 }

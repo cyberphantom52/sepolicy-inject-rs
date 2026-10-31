@@ -396,12 +396,12 @@ impl ToCil for GenfsContext {
     fn to_cil(&self) -> Option<Vec<String>> {
         let context = render_context(&self.context)?;
 
-        match self.file_type.as_deref().filter(|s| !s.is_empty()) {
+        match self.file_type {
             Some(file_type) => Some(vec![format!(
                 "(genfscon {} {} {} {})",
                 self.filesystem,
                 render_path_atom(&self.path),
-                file_type,
+                file_type.cil_keyword(),
                 context
             )]),
             None => Some(vec![format!(
