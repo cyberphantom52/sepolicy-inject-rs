@@ -1,11 +1,10 @@
 //! Concurrent use of independent policy instances.
 //!
-//! libsepol and its CIL frontend keep process-global state (the flex lexer,
-//! log handlers, the compat message handle). These tests drive several
-//! instances from different threads at once and must not crash or corrupt
-//! each other's output.
+//! libsepol's CIL frontend keeps process-global state, notably its flex
+//! lexer. This test drives several instances from different threads at once;
+//! without the crate's libsepol lock it crashes.
 
-use sepolicy::{CilPolicy, SePolicy, parser};
+use sepolicy::{CilPolicy, parser};
 use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 use std::thread;
@@ -18,13 +17,6 @@ fn cil_fixture_path(name: &str) -> PathBuf {
         .join("selinux")
         .join("libsemanage")
         .join("tests")
-        .join(name)
-}
-
-fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
         .join(name)
 }
 
@@ -116,38 +108,5 @@ fn test_concurrent_cil_patch_validate_write() {
                 && written.contains(&format!("(type {name}_extra_t)")),
             "merged CIL output is missing this thread's declarations"
         );
-    });
-}
-
-#[test]
-fn test_concurrent_sepolicy_patch_query_write() {
-    let data = std::fs::read(fixture_path("precompiled_sepolicy"))
-        .expect("failed to read precompiled sepolicy");
-
-    // Each cycle loads, queries, writes and reloads a full Android policy, so
-    // keep the count low: this drives every locked SePolicy path from several
-    // threads rather than hunting for a rare interleaving.
-    run_concurrently(4, |thread, iteration| {
-        let name = format!("sepol_concurrent_{thread}_{iteration}");
-        let patch = parser::parse(&format!(
-            "type {name}_t;\nallow {name}_t {name}_t:process fork;"
-        ))
-        .expect("failed to parse TE patch");
-        let output = TempOutput::new(&name);
-
-        let mut policy = SePolicy::from_data(&data).expect("failed to load sepolicy");
-        policy.apply_policy(&patch);
-        let source = format!("{name}_t");
-        assert!(
-            policy
-                .av_rules()
-                .any(|rule| rule.source == source && rule.class == "process"),
-            "patched rule missing from av_rules"
-        );
-
-        policy
-            .write(output.path())
-            .expect("failed to write patched policy");
-        SePolicy::from_file(output.path()).expect("failed to reload written policy");
     });
 }

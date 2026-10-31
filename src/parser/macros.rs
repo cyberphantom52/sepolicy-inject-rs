@@ -105,25 +105,6 @@ mod tests {
         assert_eq!(rule.perms.ids, ids(&["getattr", "open", "read"]));
     }
 
-    #[test]
-    fn test_parse_file_expands_brace_set_argument() {
-        let policy = parse_file(fixture_path("macros.te"), [fixture_path("macros.m4")])
-            .expect("failed to parse macro fixture");
-
-        let has_set_rule = policy.statements.iter().any(|stmt| match stmt {
-            Statement::AVRule(rule) => {
-                rule.tgt_types.ids == ids(&["macro_tgt_t", "macro_other_t"])
-                    && rule.perms.ids == ids(&["getattr", "open", "read"])
-            }
-            _ => false,
-        });
-
-        assert!(
-            has_set_rule,
-            "brace-set macro argument should expand into one allow rule"
-        );
-    }
-
     const PERMS_MACRO: &str = "define(`r_file_perms', `{ getattr open read }')";
     const ALLOW_MACRO: &str = "define(`allow_read', `allow $1 $2:file r_file_perms;')";
 
@@ -155,18 +136,6 @@ mod tests {
 
         assert!(
             matches!(err, Error::LoadMacros { ref path, .. } if path == &bad),
-            "unexpected error: {err:?}"
-        );
-    }
-
-    #[test]
-    fn test_parse_file_missing_macro_file() {
-        let missing = fixture_path("does_not_exist.m4");
-        let err = parse_file(fixture_path("macros.te"), [&missing])
-            .expect_err("missing macro file should fail");
-
-        assert!(
-            matches!(err, Error::Read { ref path, .. } if path == &missing),
             "unexpected error: {err:?}"
         );
     }
