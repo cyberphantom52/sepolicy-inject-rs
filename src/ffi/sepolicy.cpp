@@ -286,6 +286,41 @@ SePolicyImpl::perm_name_bytes(uint32_t class_value,
   return name_bytes(names[bit]);
 }
 
+uint32_t SePolicyImpl::type_value(rust::Str name) const noexcept {
+  auto type = hashtab_find<type_datum_t>(db->p_types.table, name);
+  return type ? type->s.value : 0;
+}
+
+bool SePolicyImpl::is_attribute(uint32_t value) const noexcept {
+  auto type = type_datum(value);
+  return type && type->flavor == TYPE_ATTRIB;
+}
+
+// Members come from type_attr_map, which every policy carries; attr_type_map
+// is not saved in binary policies.
+void SePolicyImpl::attribute_members(uint32_t value,
+                                     rust::Vec<uint32_t> &out) const noexcept {
+  for (uint32_t type = 1; type <= db->p_types.nprim; ++type) {
+    auto datum = type_datum(type);
+    if (datum && datum->flavor == TYPE_TYPE &&
+        ebitmap_get_bit(&db->type_attr_map[type - 1], value - 1))
+      out.push_back(type);
+  }
+}
+
+void SePolicyImpl::type_values(rust::Vec<uint32_t> &out) const noexcept {
+  for (uint32_t type = 1; type <= db->p_types.nprim; ++type) {
+    auto datum = type_datum(type);
+    if (datum && datum->flavor == TYPE_TYPE)
+      out.push_back(type);
+  }
+}
+
+uint32_t SePolicyImpl::class_value(rust::Str name) const noexcept {
+  auto cls = hashtab_find<class_datum_t>(db->p_classes.table, name);
+  return cls ? cls->s.value : 0;
+}
+
 void SePolicyImpl::attribute_entries(rust::Vec<uint32_t> &out) const noexcept {
   for_each_hashtab(db->p_types.table, [&](hashtab_ptr_t node) {
     auto type = static_cast<type_datum_t *>(node->datum);

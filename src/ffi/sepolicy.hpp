@@ -128,6 +128,14 @@ public:
   rust::Slice<const uint8_t> perm_name_bytes(uint32_t class_value,
                                              uint32_t bit) const noexcept;
 
+  // Type and class lookups for resolving type and permission sets; 0 when
+  // the name is unknown.
+  uint32_t type_value(rust::Str name) const noexcept;
+  bool is_attribute(uint32_t value) const noexcept;
+  void attribute_members(uint32_t value, rust::Vec<uint32_t> &out) const noexcept;
+  void type_values(rust::Vec<uint32_t> &out) const noexcept;
+  uint32_t class_value(rust::Str name) const noexcept;
+
   // Bulk extraction of rule records, with names left as values.
   void attribute_entries(rust::Vec<uint32_t> &out) const noexcept;
   void type_entries(rust::Vec<TypeEntry> &out,
