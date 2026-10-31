@@ -1026,6 +1026,7 @@ fn parse_comma_list(pair: pest::iterators::Pair<Rule>) -> Result<IdSet, ParseErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::ToCil;
 
     #[test]
     fn test_parse_allow_rule() {
@@ -1268,5 +1269,70 @@ allow my_type_t self:file read;
             xperm_ranges("allowxperm a_t b_t:chr_file ioctl { 0x5405-0x5401 };"),
             Err(ParseError::InvalidXperm(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_genfscon_paths_with_special_characters() {
+        // checkpolicy reads a path as everything up to whitespace.
+        let paths = [
+            "/devices/platform/soc/soc:oplus-omrg/",
+            "/sys/module/qca6750-wlan/",
+            "/devices/platform/soc/1d84000.ufshc/host0@0/",
+            "/devices/virtual/misc/hw+random/",
+            "/devices/platform/soc/a,b/",
+        ];
+
+        for path in paths {
+            let input = format!("genfscon sysfs {path} u:object_r:sysfs_omrg:s0");
+            let result = parse(&input);
+            assert!(
+                result.is_ok(),
+                "Parse failed for {path}: {:?}",
+                result.err()
+            );
+
+            let policy = result.unwrap();
+            if let Statement::GenfsContext(g) = &policy.statements[0] {
+                assert_eq!(g.filesystem, "sysfs");
+                assert_eq!(g.path, path);
+                assert_eq!(g.context.type_name, "sysfs_omrg");
+            } else {
+                panic!("Expected GenfsContext");
+            }
+
+            let cil = policy.to_cil().expect("genfscon should render to CIL");
+            assert_eq!(
+                cil,
+                [format!(
+                    "(genfscon sysfs \"{path}\" (u object_r sysfs_omrg ((s0) (s0))))"
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_genfscon_with_file_type() {
+        let input =
+            "genfscon sysfs /devices/platform/soc/soc:oplus-omrg/ -d u:object_r:sysfs_omrg:s0";
+        let result = parse(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+
+        if let Statement::GenfsContext(g) = &result.unwrap().statements[0] {
+            assert_eq!(g.path, "/devices/platform/soc/soc:oplus-omrg/");
+            assert_eq!(g.file_type.as_deref(), Some("d"));
+            assert_eq!(g.context.type_name, "sysfs_omrg");
+        } else {
+            panic!("Expected GenfsContext");
+        }
+
+        let input = "genfscon proc /sys/kernel/x - - u:object_r:proc_x:s0";
+        let result = parse(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        if let Statement::GenfsContext(g) = &result.unwrap().statements[0] {
+            assert_eq!(g.path, "/sys/kernel/x");
+            assert_eq!(g.context.type_name, "proc_x");
+        } else {
+            panic!("Expected GenfsContext");
+        }
     }
 }
