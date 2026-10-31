@@ -19,6 +19,9 @@ pub enum ParseError {
 
     #[error("Unexpected rule: {0:?}")]
     UnexpectedRule(Rule),
+
+    #[error("Invalid ioctl set: {0}")]
+    InvalidXperm(String),
 }
 
 /// Parse a .te policy file string into a Policy AST.
@@ -209,61 +212,102 @@ fn parse_avxrule_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, Par
     }))
 }
 
+/// Read an ioctl set as checkpolicy does: values from nested sets are
+/// collected, sorted and merged into ranges, and a leading `~` flips the
+/// result to the ranges it leaves out of 0x0000-0xffff.
 fn parse_xperm_set(pair: pest::iterators::Pair<Rule>) -> Result<Vec<XPerm>, ParseError> {
-    let mut xperms = Vec::new();
-
-    for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::xperm_element {
-            if let Some(xperm) = parse_xperm_element(inner)? {
-                xperms.push(xperm);
-            }
-        }
-    }
-
-    Ok(xperms)
-}
-
-fn parse_xperm_element(pair: pest::iterators::Pair<Rule>) -> Result<Option<XPerm>, ParseError> {
+    let mut complement = false;
+    let mut ranges = Vec::new();
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::xperm_range => {
-                let mut hex_values = Vec::new();
-                for hex in inner.into_inner() {
-                    if hex.as_rule() == Rule::HEX_NUMBER {
-                        if let Some(val) = parse_hex_value(hex.as_str()) {
-                            hex_values.push(val);
-                        }
-                    }
-                }
-                if hex_values.len() == 2 {
-                    return Ok(Some(XPerm {
-                        low: hex_values[0],
-                        high: hex_values[1],
-                        reset: false,
-                    }));
-                }
-            }
-            Rule::HEX_NUMBER => {
-                if let Some(val) = parse_hex_value(inner.as_str()) {
-                    return Ok(Some(XPerm {
-                        low: val,
-                        high: val,
-                        reset: false,
-                    }));
-                }
-            }
-            _ => {}
+            Rule::TILDE => complement = true,
+            _ => collect_xperm_ranges(inner, &mut ranges)?,
         }
     }
-    Ok(None)
+
+    ranges.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::new();
+    for (low, high) in ranges {
+        match merged.last_mut() {
+            Some(last) if last.1 + 1 >= low => last.1 = last.1.max(high),
+            _ => merged.push((low, high)),
+        }
+    }
+
+    if complement {
+        let mut flipped = Vec::new();
+        let mut next = 0;
+        for (low, high) in merged {
+            if low > next {
+                flipped.push((next, low - 1));
+            }
+            next = high + 1;
+        }
+        if next <= 0xffff {
+            flipped.push((next, 0xffff));
+        }
+        merged = flipped;
+    }
+
+    Ok(merged
+        .into_iter()
+        .map(|(low, high)| XPerm {
+            low: low as u16,
+            high: high as u16,
+            reset: false,
+        })
+        .collect())
 }
 
-fn parse_hex_value(s: &str) -> Option<u16> {
-    let s = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .unwrap_or(s);
-    u16::from_str_radix(s, 16).ok()
+fn collect_xperm_ranges(
+    pair: pest::iterators::Pair<Rule>,
+    ranges: &mut Vec<(u32, u32)>,
+) -> Result<(), ParseError> {
+    match pair.as_rule() {
+        Rule::nested_xperm_set | Rule::xperm_element => {
+            for inner in pair.into_inner() {
+                collect_xperm_ranges(inner, ranges)?;
+            }
+        }
+        Rule::xperm_range => {
+            let mut values = pair
+                .into_inner()
+                .map(|value| parse_xperm_value(value.as_str()));
+            let (low, high) = (values.next().unwrap_or(0), values.next().unwrap_or(0));
+            if high < low {
+                return Err(ParseError::InvalidXperm(format!(
+                    "range 0x{low:x}-0x{high:x} must be in ascending order"
+                )));
+            }
+            ranges.push((u32::from(low), u32::from(high)));
+        }
+        Rule::xperm_number => {
+            let value = u32::from(parse_xperm_value(pair.as_str()));
+            ranges.push((value, value));
+        }
+        Rule::IDENTIFIER => {
+            return Err(ParseError::InvalidXperm(format!(
+                "`{}` is not a number (an unexpanded macro?)",
+                pair.as_str()
+            )));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Parse an ioctl number like checkpolicy's `(uint16_t) strtoul(s, NULL, 0)`:
+/// hex, octal or decimal, truncated to 16 bits.
+fn parse_xperm_value(s: &str) -> u16 {
+    let parsed = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)
+    } else if s.len() > 1 && s.starts_with('0') {
+        u64::from_str_radix(&s[1..], 8)
+    } else {
+        s.parse()
+    };
+    // strtoul saturates on overflow.
+    parsed.unwrap_or(u64::MAX) as u16
 }
 
 fn parse_typerule_def(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseError> {
@@ -1174,5 +1218,55 @@ allow my_type_t self:file read;
 
         let policy = result.unwrap();
         assert_eq!(policy.statements.len(), 3);
+    }
+
+    fn xperm_ranges(input: &str) -> Result<Vec<(u16, u16)>, ParseError> {
+        let policy = parse(input)?;
+        if let Statement::AVXRule(rule) = &policy.statements[0] {
+            Ok(rule.xperms.iter().map(|x| (x.low, x.high)).collect())
+        } else {
+            panic!("Expected AVXRule");
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_xperm_sets() {
+        // Macro expansion nests sets; checkpolicy flattens, sorts and merges them.
+        let ranges = xperm_ranges(
+            "allowxperm a_t b_t:chr_file ioctl { 0x8910 { 0x5402 0x5401 } { { 0x5403-0x5405 } } };",
+        )
+        .expect("nested set should parse");
+        assert_eq!(ranges, [(0x5401, 0x5405), (0x8910, 0x8910)]);
+    }
+
+    #[test]
+    fn test_parse_complemented_xperm_set() {
+        let ranges = xperm_ranges("neverallowxperm a_t b_t:chr_file ioctl ~{ 0x5451 0x5450 };")
+            .expect("complemented set should parse");
+        assert_eq!(ranges, [(0x0000, 0x544f), (0x5452, 0xffff)]);
+
+        let ranges = xperm_ranges("neverallowxperm a_t b_t:chr_file ioctl ~0x0000;")
+            .expect("complemented value should parse");
+        assert_eq!(ranges, [(0x0001, 0xffff)]);
+    }
+
+    #[test]
+    fn test_parse_xperm_values_like_checkpolicy() {
+        // checkpolicy reads values with strtoul and truncates them to 16 bits.
+        let ranges = xperm_ranges("allowxperm a_t b_t:chr_file ioctl { 0x800454d2 21505 };")
+            .expect("set should parse");
+        assert_eq!(ranges, [(0x5401, 0x5401), (0x54d2, 0x54d2)]);
+    }
+
+    #[test]
+    fn test_parse_invalid_xperm_sets() {
+        assert!(matches!(
+            xperm_ranges("allowxperm a_t b_t:chr_file ioctl { 0x5401 unpriv_tty_ioctls };"),
+            Err(ParseError::InvalidXperm(msg)) if msg.contains("unpriv_tty_ioctls")
+        ));
+        assert!(matches!(
+            xperm_ranges("allowxperm a_t b_t:chr_file ioctl { 0x5405-0x5401 };"),
+            Err(ParseError::InvalidXperm(_))
+        ));
     }
 }

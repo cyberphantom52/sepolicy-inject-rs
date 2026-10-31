@@ -134,12 +134,16 @@ avrule_def = { (^"allow" | ^"dontaudit" | ^"auditallow" | ^"neverallow") ~ names
 
 avxrule_def = { (^"allowxperm" | ^"dontauditxperm" | ^"auditallowxperm" | ^"neverallowxperm") ~ names ~ names ~ ":" ~ names ~ IDENTIFIER ~ xperm_set ~ ";"+ }
 
-// XPerm set for extended permission rules
-xperm_set = { "{" ~ xperm_element+ ~ "}" | xperm_element }
+// XPerm set for extended permission rules, as checkpolicy reads them: sets
+// nest, and a leading ~ complements the whole set.
+xperm_set = { TILDE? ~ (nested_xperm_set | xperm_element) }
+nested_xperm_set = { "{" ~ (nested_xperm_set | xperm_element)+ ~ "}" }
 
-// Accept hex numbers, ranges, or identifiers (for unexpanded macros)
-xperm_range = { HEX_NUMBER ~ "-" ~ HEX_NUMBER }
-xperm_element = { xperm_range | HEX_NUMBER | IDENTIFIER }
+// An identifier is never valid here; it is accepted only to report an
+// unexpanded macro by name.
+xperm_range = { xperm_number ~ "-" ~ xperm_number }
+xperm_element = { xperm_range | xperm_number | IDENTIFIER }
+xperm_number = @{ HEX_NUMBER | ASCII_DIGIT+ }
 
 // =============================================================================
 // Type Rules (type_transition, type_change, type_member)
