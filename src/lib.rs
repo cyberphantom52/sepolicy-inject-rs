@@ -83,9 +83,11 @@ mod ffi {
         name: &'a [u8],
     }
 
+    /// A genfscon entry; `class_` is 0 when it applies to every file type.
     struct GenfsEntry<'a> {
         fs: &'a [u8],
         path: &'a [u8],
+        class_: u32,
         context: String,
     }
 
@@ -164,7 +166,14 @@ mod ffi {
         );
         fn type_change(self: Pin<&mut SePolicyImpl>, src: &str, tgt: &str, cls: &str, dest: &str);
         fn type_member(self: Pin<&mut SePolicyImpl>, src: &str, tgt: &str, cls: &str, dest: &str);
-        fn genfscon(self: Pin<&mut SePolicyImpl>, fs: &str, path: &str, context: &str);
+        // An empty class applies the entry to every file type.
+        fn genfscon(
+            self: Pin<&mut SePolicyImpl>,
+            fs: &str,
+            path: &str,
+            class_name: &str,
+            context: &str,
+        );
 
         // Names borrowed from the policydb; empty if the value has no name.
         fn type_name_bytes(self: &SePolicyImpl, value: u32) -> &[u8];

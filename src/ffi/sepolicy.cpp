@@ -425,6 +425,7 @@ void SePolicyImpl::genfs_entries(rust::Vec<GenfsEntry> &out) const noexcept {
       GenfsEntry entry;
       entry.fs = name_bytes(genfs->fstype);
       entry.path = name_bytes(context->u.name);
+      entry.class_ = context->v.sclass;
       entry.context = rust::String::lossy(ctx.get());
       out.push_back(std::move(entry));
     });
@@ -861,7 +862,16 @@ void SePolicyImpl::type_member(rust::Str src, rust::Str tgt, rust::Str cls,
 
 // Genfscon
 bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
-                                rust::Str context) {
+                                rust::Str class_name, rust::Str context) {
+  // An empty class applies the entry to every file type.
+  uint32_t sclass = 0;
+  if (!class_name.empty()) {
+    auto cls = hashtab_find<class_datum_t>(db->p_classes.table, class_name);
+    if (!cls)
+      return false;
+    sclass = cls->s.value;
+  }
+
   context_struct_t *ctx;
   if (context_from_string(nullptr, db, &ctx, context.data(), context.size()))
     return false;
@@ -883,10 +893,15 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   ocontext_t *o_ctx = nullptr;
   ocontext_t **link = &fs->head;
   for (; *link; link = &(*link)->next) {
-    if (str_eq((*link)->u.name, path)) {
+    bool same_path = str_eq((*link)->u.name, path);
+    if (same_path && (*link)->v.sclass == sclass) {
       o_ctx = *link;
       break;
     }
+    // A class-specific entry goes before the generic entry for its path,
+    // which would otherwise always match first.
+    if (same_path && sclass && !(*link)->v.sclass)
+      break;
     if (path.size() > strlen((*link)->u.name))
       break;
   }
@@ -894,6 +909,7 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   if (!o_ctx) {
     o_ctx = static_cast<ocontext_t *>(calloc(1, sizeof(ocontext_t)));
     o_ctx->u.name = dup_str(path);
+    o_ctx->v.sclass = sclass;
     o_ctx->next = *link;
     *link = o_ctx;
   }
@@ -905,9 +921,9 @@ bool SePolicyImpl::add_genfscon(rust::Str fs_name, rust::Str path,
   return true;
 }
 
-void SePolicyImpl::genfscon(rust::Str fs, rust::Str path,
-                        rust::Str context) noexcept {
-  add_genfscon(fs, path, context);
+void SePolicyImpl::genfscon(rust::Str fs, rust::Str path, rust::Str class_name,
+                            rust::Str context) noexcept {
+  add_genfscon(fs, path, class_name, context);
 }
 
 bool SePolicyImpl::write(rust::Str path) const noexcept {

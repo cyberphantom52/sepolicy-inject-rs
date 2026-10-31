@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 use crate::ffi::{AvtabEntry, AvtabKind, SePolicyImpl, XpermEntry};
+use crate::parser::ast::GenfsFileType;
 
 /// Decode a name borrowed from the policydb; `None` if it has no name.
 pub(crate) fn name(bytes: &[u8]) -> Option<Cow<'_, str>> {
@@ -394,11 +395,18 @@ impl fmt::Display for FilenameTransition<'_> {
 pub struct Genfs<'p> {
     pub fs: Cow<'p, str>,
     pub path: Cow<'p, str>,
+    /// The file type the entry is limited to; `None` applies to all.
+    pub file_type: Option<GenfsFileType>,
     pub context: String,
 }
 
 impl fmt::Display for Genfs<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_words(f, &["genfscon", &self.fs, &self.path, &self.context])
+        write_words(f, &["genfscon", &self.fs, &self.path])?;
+        if let Some(file_type) = self.file_type {
+            write!(f, " -{}", file_type.as_checkpolicy())?;
+        }
+        f.write_str(" ")?;
+        f.write_str(&self.context)
     }
 }

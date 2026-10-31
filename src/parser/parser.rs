@@ -22,6 +22,9 @@ pub enum ParseError {
 
     #[error("Invalid ioctl set: {0}")]
     InvalidXperm(String),
+
+    #[error("Invalid genfscon file type `{0}`")]
+    InvalidGenfsFileType(String),
 }
 
 /// Parse a .te policy file string into a Policy AST.
@@ -657,13 +660,24 @@ fn parse_genfscon(pair: pest::iterators::Pair<Rule>) -> Result<Statement, ParseE
         level: None,
     };
 
+    let mut minuses = 0;
+
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::IDENTIFIER => {
                 if filesystem.is_empty() {
                     filesystem = inner.as_str().to_string();
-                } else if file_type.is_none() {
-                    file_type = Some(inner.as_str().to_string());
+                } else {
+                    file_type = Some(GenfsFileType::from_checkpolicy(inner.as_str()).ok_or_else(
+                        || ParseError::InvalidGenfsFileType(inner.as_str().to_string()),
+                    )?);
+                }
+            }
+            // `- -` is checkpolicy's regular-file type.
+            Rule::MINUS => {
+                minuses += 1;
+                if minuses == 2 {
+                    file_type = Some(GenfsFileType::File);
                 }
             }
             Rule::PATH => path = inner.as_str().to_string(),
@@ -1320,7 +1334,7 @@ allow my_type_t self:file read;
 
         if let Statement::GenfsContext(g) = &result.unwrap().statements[0] {
             assert_eq!(g.path, "/devices/platform/soc/soc:oplus-omrg/");
-            assert_eq!(g.file_type.as_deref(), Some("d"));
+            assert_eq!(g.file_type, Some(GenfsFileType::Dir));
             assert_eq!(g.context.type_name, "sysfs_omrg");
         } else {
             panic!("Expected GenfsContext");
@@ -1331,9 +1345,23 @@ allow my_type_t self:file read;
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         if let Statement::GenfsContext(g) = &result.unwrap().statements[0] {
             assert_eq!(g.path, "/sys/kernel/x");
+            assert_eq!(g.file_type, Some(GenfsFileType::File));
             assert_eq!(g.context.type_name, "proc_x");
         } else {
             panic!("Expected GenfsContext");
+        }
+    }
+
+    #[test]
+    fn test_parse_genfscon_invalid_file_type() {
+        for input in [
+            "genfscon proc /x -x u:object_r:proc_x:s0",
+            "genfscon proc /x -dd u:object_r:proc_x:s0",
+        ] {
+            assert!(
+                matches!(parse(input), Err(ParseError::InvalidGenfsFileType(_))),
+                "{input} should be rejected"
+            );
         }
     }
 }
