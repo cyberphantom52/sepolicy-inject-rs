@@ -526,3 +526,40 @@ bool CilPolicyImpl::extract_label(rust::Str label,
                                label_str);
   return true;
 }
+
+static int collect_declared_types(struct cil_tree_node *node, uint32_t *finished,
+                                  void *extra_args) {
+  (void)finished;
+  switch (node->flavor) {
+  case CIL_TYPE:
+  case CIL_TYPEATTRIBUTE:
+  case CIL_TYPEALIAS: {
+    const char *name = DATUM(node->data)->name;
+    if (name != nullptr) {
+      static_cast<rust::Vec<rust::String> *>(extra_args)->push_back(
+          rust::String(name));
+    }
+    break;
+  }
+  default:
+    break;
+  }
+  return SEPOL_OK;
+}
+
+bool CilPolicyImpl::declared_types(rust::Vec<rust::String> &out) const noexcept {
+  auto db = build_db();
+  if (!db) {
+    return false;
+  }
+  if (cil_build_ast(db.get(), db->parse->root, db->ast->root) != SEPOL_OK) {
+    log_error(CIL_LOG_TARGET, "Failed to build CIL AST");
+    return false;
+  }
+  if (cil_tree_walk(db->ast->root, collect_declared_types, nullptr, nullptr,
+                    &out) != SEPOL_OK) {
+    log_error(CIL_LOG_TARGET, "Failed while walking the CIL AST for declarations");
+    return false;
+  }
+  return true;
+}

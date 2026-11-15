@@ -49,3 +49,24 @@ fn reduces_an_attribute_set_to_the_label() {
 fn finds_nothing_for_an_unknown_label() {
     assert!(extract("label_that_does_not_exist").is_empty());
 }
+
+#[test]
+fn lists_declared_types_attributes_and_aliases() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/extract_label.cil");
+    let declared = CilPolicy::from_file(path)
+        .expect("fixture loads")
+        .declared_types()
+        .expect("declarations are read");
+
+    for name in [
+        "hal_charger_oplus",
+        "hal_charger_related",
+        "hal_charger_exec_alias",
+    ] {
+        assert!(declared.contains(name), "{name} missing from {declared:?}");
+    }
+    assert!(
+        !declared.contains("object_r"),
+        "a role is not a type: {declared:?}"
+    );
+}

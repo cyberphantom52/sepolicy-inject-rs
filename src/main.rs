@@ -97,6 +97,12 @@ enum SepolCommand {
         /// Names to extract; `*` and `?` in one make it a pattern
         #[arg(required = true, value_name = "NAME")]
         names: Vec<String>,
+
+        /// CIL of the policy the result is for (can be specified multiple
+        /// times): what it declares is not declared again, and rules needing a
+        /// name it lacks are set aside
+        #[arg(long, value_name = ".cil", num_args = 1, action = clap::ArgAction::Append)]
+        known: Vec<PathBuf>,
     },
 
     #[command(flatten)]
@@ -320,8 +326,21 @@ fn handle_sepol_command(command: Option<SepolCommand>, policy: &mut SePolicy) ->
             }
         }
 
-        Some(SepolCommand::Extract { names }) => {
-            let extraction = policy.extract(|name| names.iter().any(|p| glob(p, name)), None);
+        Some(SepolCommand::Extract { names, known }) => {
+            let defined = if known.is_empty() {
+                None
+            } else {
+                let declared = CilPolicy::from_files(&known).and_then(|p| p.declared_types());
+                match declared {
+                    Ok(declared) => Some(declared.into_iter().collect()),
+                    Err(e) => {
+                        error!(error = %e, "Failed to read the known policy");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            };
+            let extraction =
+                policy.extract(|name| names.iter().any(|p| glob(p, name)), defined.as_ref());
             print_extraction(&extraction);
         }
 

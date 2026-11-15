@@ -223,6 +223,7 @@ mod ffi {
         fn validate(self: Pin<&mut CilPolicyImpl>) -> bool;
         fn compile(self: Pin<&mut CilPolicyImpl>) -> UniquePtr<SePolicyImpl>;
         fn extract_label(self: &CilPolicyImpl, label: &str, out: &mut Vec<String>) -> bool;
+        fn declared_types(self: &CilPolicyImpl, out: &mut Vec<String>) -> bool;
 
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }

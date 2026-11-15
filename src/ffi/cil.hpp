@@ -38,6 +38,7 @@ public:
   void set_policy_version(int version) noexcept;
   std::unique_ptr<SePolicyImpl> compile() noexcept;
   bool extract_label(rust::Str label, rust::Vec<rust::String> &out) const noexcept;
+  bool declared_types(rust::Vec<rust::String> &out) const noexcept;
 };
 
 std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept;

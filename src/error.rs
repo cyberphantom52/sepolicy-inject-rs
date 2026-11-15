@@ -59,6 +59,9 @@ pub enum Error {
     #[error("failed to extract statements for {0} from the CIL policy")]
     CilExtract(String),
 
+    #[error("failed to read the CIL policy's declarations")]
+    CilDeclarations,
+
     #[error("failed to render policy patch into CIL")]
     CilRender,
 

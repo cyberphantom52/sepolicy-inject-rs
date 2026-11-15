@@ -136,6 +136,17 @@ impl CilPolicy {
         Ok(out)
     }
 
+    /// The types, attributes and type aliases the loaded sources declare, as
+    /// written there. The sources are only parsed, not resolved, so one source
+    /// of a split policy can be read without the rest.
+    pub fn declared_types(&self) -> Result<std::collections::BTreeSet<String>> {
+        let mut out = Vec::new();
+        if !self.with(|p| p.declared_types(&mut out)) {
+            return Err(Error::CilDeclarations);
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// Write the loaded CIL database back out as merged CIL source.
     pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
