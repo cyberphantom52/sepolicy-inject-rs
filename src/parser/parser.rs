@@ -1241,7 +1241,7 @@ if (my_bool) {
 
     #[test]
     fn test_parse_permissive() {
-        let input = "permissive my_domain_t;";
+        let input = "# a comment\npermissive my_domain_t; # a trailing comment";
         let result = parse(input);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
 
