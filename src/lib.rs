@@ -1,5 +1,6 @@
 mod cil;
 mod error;
+mod extract;
 mod lock;
 pub mod log;
 pub mod parser;
@@ -8,6 +9,7 @@ pub mod rules;
 
 pub use cil::CilPolicy;
 pub use error::{Error, Result};
+pub use extract::Extraction;
 pub use ffi::XPerm;
 pub use policy::SePolicy;
 

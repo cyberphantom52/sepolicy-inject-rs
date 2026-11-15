@@ -92,6 +92,13 @@ enum SepolCommand {
         rule_type: RuleType,
     },
 
+    /// Print, as .te, the declarations and rules that concern some types and attributes
+    Extract {
+        /// Names to extract; `*` and `?` in one make it a pattern
+        #[arg(required = true, value_name = "NAME")]
+        names: Vec<String>,
+    },
+
     #[command(flatten)]
     Shared(Commands),
 }
@@ -313,6 +320,11 @@ fn handle_sepol_command(command: Option<SepolCommand>, policy: &mut SePolicy) ->
             }
         }
 
+        Some(SepolCommand::Extract { names }) => {
+            let extraction = policy.extract(|name| names.iter().any(|p| glob(p, name)), None);
+            print_extraction(&extraction);
+        }
+
         Some(SepolCommand::Shared(cmd)) => return handle_command(cmd, policy),
 
         None => print_summary(policy),
@@ -478,6 +490,59 @@ fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Whether `name` matches `pattern`, in which `*` stands for any run of
+/// characters and `?` for any one.
+fn glob(pattern: &str, name: &str) -> bool {
+    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
+    let (mut p, mut n) = (0, 0);
+    let mut star = None;
+    while n < name.len() {
+        match pattern.get(p) {
+            Some(b'*') => {
+                star = Some((p, n));
+                p += 1;
+            }
+            Some(&c) if c == b'?' || c == name[n] => {
+                p += 1;
+                n += 1;
+            }
+            _ => match star {
+                Some((sp, sn)) => {
+                    p = sp + 1;
+                    n = sn + 1;
+                    star = Some((sp, sn + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    pattern[p..].iter().all(|&c| c == b'*')
+}
+
+fn print_extraction(extraction: &sepolicy::Extraction) {
+    for line in &extraction.declarations {
+        println!("{line}");
+    }
+    if !extraction.declarations.is_empty() && !extraction.rules.is_empty() {
+        println!();
+    }
+    for line in &extraction.rules {
+        println!("{line}");
+    }
+    if extraction.unresolved.is_empty() {
+        return;
+    }
+    println!();
+    println!("# Rules left out: each needs a name neither extracted nor defined.");
+    for (name, rules) in &extraction.unresolved {
+        println!("#");
+        println!("# {name} ({})", rules.len());
+        for rule in rules {
+            println!("#   {rule}");
+        }
+    }
 }
 
 fn extract_labels(source: &Path, labels: &[String]) -> ExitCode {
