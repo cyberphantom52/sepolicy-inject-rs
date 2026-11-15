@@ -8,6 +8,7 @@ A Rust library and CLI tool for injecting SELinux policy rules into compiled pol
 - **CIL**: Patch, validate and compile CIL sources, in memory or on disk
 - **Parse and apply `.te` files**: Parse Type Enforcement files and inject rules into loaded policies
 - **Query rules**: Structured rule views that borrow names from the policy instead of formatting text
+- **Extract policy**: Take what concerns some types out of a compiled policy as `.te` for another, or print a CIL policy's statements that name a label
 - **M4 macro expansion**: Built-in support for M4 macro preprocessing (required for many SELinux policy files)
 - **Live patching**: Load patched policies directly into the running kernel (Android)
 - **CLI and library**: Use as a command-line tool or embed in your Rust projects
@@ -98,6 +99,21 @@ sepolicy-inject-rs precompiled --policy /path/to/policy \
   --output /path/to/patched_policy
 ```
 
+#### Extract Policy for Some Types
+
+```bash
+# Print, as .te, the declarations and rules that concern some types and
+# attributes; a name with * or ? is a pattern
+sepolicy-inject-rs precompiled --policy precompiled_sepolicy \
+  extract 'hal_vibrator_default*'
+
+# For another device's policy: what its CIL declares is not declared again,
+# and rules that need a name it lacks are set aside, as comments at the end
+sepolicy-inject-rs precompiled --policy donor/precompiled_sepolicy \
+  extract 'hal_vibrator_default*' \
+  --known plat_sepolicy.cil --known vendor_sepolicy.cil > vibrator.te
+```
+
 #### Work with CIL
 
 ```bash
@@ -106,6 +122,10 @@ sepolicy-inject-rs precompiled --policy /path/to/policy \
 # first, for references the patched file does not define itself.
 sepolicy-inject-rs cil vendor_sepolicy.cil \
   patch -p rules.te --resolve-with plat_sepolicy.cil --output patched.cil
+
+# Print the statements of a CIL file that name a label, with the
+# booleanif, tunableif or optional block one is in
+sepolicy-inject-rs cil vendor_sepolicy.cil extract hal_vibrator_default
 
 # Compile CIL to a binary policy, then optionally print or patch it
 sepolicy-inject-rs cil policy.cil compile --output policy.bin print types
