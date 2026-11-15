@@ -56,6 +56,9 @@ pub enum Error {
     #[error("failed to serialize CIL policy")]
     CilSerialize,
 
+    #[error("failed to extract statements for {0} from the CIL policy")]
+    CilExtract(String),
+
     #[error("failed to render policy patch into CIL")]
     CilRender,
 

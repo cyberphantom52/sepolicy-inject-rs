@@ -122,6 +122,20 @@ impl CilPolicy {
         Ok(out)
     }
 
+    /// The statements of the loaded CIL database that name `label`, rendered as
+    /// CIL. A statement inside a `booleanif`, `tunableif` or `optional` is given
+    /// with that whole block; a `typeattributeset` listing `label` among plain
+    /// members is given as one that lists only `label`. No statement names it
+    /// when the result is empty.
+    pub fn extract_label(&self, label: &str) -> Result<Vec<String>> {
+        let label = label.trim();
+        let mut out = Vec::new();
+        if label.is_empty() || !self.with(|p| p.extract_label(label, &mut out)) {
+            return Err(Error::CilExtract(label.to_owned()));
+        }
+        Ok(out)
+    }
+
     /// Write the loaded CIL database back out as merged CIL source.
     pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();

@@ -72,6 +72,13 @@ enum SingleCilCommand {
     #[command(flatten)]
     Compile(CilCompileCommand),
 
+    /// Print the CIL statements that name each label
+    Extract {
+        /// Types, attributes or other names to find
+        #[arg(required = true, value_name = "LABEL")]
+        labels: Vec<String>,
+    },
+
     #[command(flatten)]
     Shared(Commands),
 }
@@ -158,7 +165,7 @@ enum RuleType {
 /// On other platforms, this uses `tracing-subscriber` with an environment filter
 /// (controllable via the `RUST_LOG` environment variable).
 fn init_subscriber() {
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, prelude::*};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -203,6 +210,7 @@ fn main() -> ExitCode {
 
                     handle_cil_compile_command(Some(cmd), &mut policy)
                 }
+                Some(SingleCilCommand::Extract { labels }) => extract_labels(&source, &labels),
                 Some(SingleCilCommand::Shared(cmd)) => handle_single_cil_command(&source, cmd),
                 None => {
                     let mut policy = match CilPolicy::compile_split(std::iter::once(source)) {
@@ -465,6 +473,46 @@ fn handle_single_cil_command(source: &Path, command: Commands) -> ExitCode {
             }
 
             info!(count = policies.len(), "Successfully patched CIL policy");
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn extract_labels(source: &Path, labels: &[String]) -> ExitCode {
+    let policy = match CilPolicy::from_file(source) {
+        Ok(policy) => policy,
+        Err(e) => {
+            error!(path = %source.display(), error = %e, "Failed to load CIL policy");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let show_headers = labels.len() > 1;
+    for (index, label) in labels.iter().enumerate() {
+        let matches = match policy.extract_label(label) {
+            Ok(matches) => matches,
+            Err(e) => {
+                error!(path = %source.display(), error = %e, "Failed to extract label");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        if index > 0 {
+            println!();
+        }
+        if show_headers {
+            println!("== {label} ==");
+            println!();
+        }
+        if matches.is_empty() {
+            println!("No matching CIL statements found for '{label}'.");
+        }
+        for (index, entry) in matches.iter().enumerate() {
+            if index > 0 {
+                println!();
+            }
+            println!("{entry}");
         }
     }
 

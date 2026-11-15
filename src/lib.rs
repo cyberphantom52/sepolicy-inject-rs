@@ -220,6 +220,7 @@ mod ffi {
         fn to_cil(self: &CilPolicyImpl, out: &mut String) -> bool;
         fn validate(self: Pin<&mut CilPolicyImpl>) -> bool;
         fn compile(self: Pin<&mut CilPolicyImpl>) -> UniquePtr<SePolicyImpl>;
+        fn extract_label(self: &CilPolicyImpl, label: &str, out: &mut Vec<String>) -> bool;
 
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }

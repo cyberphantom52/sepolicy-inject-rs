@@ -21,6 +21,7 @@ fn main() {
         .std("c++20")
         .include(&libsepol_dir.join("include"))
         .include(&libsepol_dir.join("cil").join("include"))
+        .include(&libsepol_dir.join("cil").join("src"))
         .include("src/ffi")
         .file("src/ffi/mmap.cpp")
         .file("src/ffi/sepolicy.cpp")
