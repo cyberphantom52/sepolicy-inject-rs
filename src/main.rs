@@ -163,7 +163,8 @@ enum RuleType {
 /// to output logs to logcat.
 ///
 /// On other platforms, this uses `tracing-subscriber` with an environment filter
-/// (controllable via the `RUST_LOG` environment variable).
+/// (controllable via the `RUST_LOG` environment variable), writing to stderr so
+/// that what `print` and `extract` write to stdout is the policy alone.
 fn init_subscriber() {
     use tracing_subscriber::{EnvFilter, prelude::*};
 
@@ -186,7 +187,7 @@ fn init_subscriber() {
 
         tracing_subscriber::registry()
             .with(filter)
-            .with(fmt::layer().with_target(true))
+            .with(fmt::layer().with_target(true).with_writer(std::io::stderr))
             .init();
     }
 }
