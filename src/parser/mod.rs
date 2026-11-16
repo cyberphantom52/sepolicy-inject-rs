@@ -2,6 +2,7 @@ pub mod ast;
 mod cil;
 #[cfg(feature = "m4")]
 mod macros;
+#[allow(clippy::module_inception)]
 mod parser;
 
 pub use cil::ToCil;

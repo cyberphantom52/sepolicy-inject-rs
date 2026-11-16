@@ -19,9 +19,9 @@ fn main() {
     // Build the FFI Bridge
     cxx_build::bridge("src/lib.rs")
         .std("c++20")
-        .include(&libsepol_dir.join("include"))
-        .include(&libsepol_dir.join("cil").join("include"))
-        .include(&libsepol_dir.join("cil").join("src"))
+        .include(libsepol_dir.join("include"))
+        .include(libsepol_dir.join("cil").join("include"))
+        .include(libsepol_dir.join("cil").join("src"))
         .include("src/ffi")
         .file("src/ffi/mmap.cpp")
         .file("src/ffi/sepolicy.cpp")
@@ -51,10 +51,10 @@ fn build_libsepol() {
 
     libsepol_build
         .cpp(false)
-        .include(&libsepol_dir.join("include"))
-        .include(&libsepol_dir.join("cil").join("include"))
-        .include(&libsepol_dir.join("src"))
-        .include(&libsepol_dir.join("cil").join("src"))
+        .include(libsepol_dir.join("include"))
+        .include(libsepol_dir.join("cil").join("include"))
+        .include(libsepol_dir.join("src"))
+        .include(libsepol_dir.join("cil").join("src"))
         .flag("-Wno-unused-but-set-variable");
 
     // Determine if we should define HAVE_REALLOCARRAY

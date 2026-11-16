@@ -34,6 +34,12 @@ pub struct CilPolicy {
     inner: UniquePtr<CilPolicyImpl>,
 }
 
+impl Default for CilPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CilPolicy {
     /// Create a new empty CIL policy
     pub fn new() -> Self {

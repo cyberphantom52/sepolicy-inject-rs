@@ -50,10 +50,10 @@ fn parse_statements(pair: pest::iterators::Pair<Rule>) -> Result<Vec<Statement>,
     let mut statements = Vec::new();
 
     for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::statement {
-            if let Some(stmt) = parse_statement(inner)? {
-                statements.push(stmt);
-            }
+        if inner.as_rule() == Rule::statement
+            && let Some(stmt) = parse_statement(inner)?
+        {
+            statements.push(stmt);
         }
     }
 
