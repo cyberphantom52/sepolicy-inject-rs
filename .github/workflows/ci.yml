@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14]
+        os: [ubuntu-22.04, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,19 +52,17 @@ jobs:
           - x86_64-linux-android
           - i686-linux-android
     runs-on: ubuntu-22.04
-    env:
-      # build.rs reads it to tell whether Bionic has reallocarray, as
-      # cargo-ndk's -P sets it.
-      ANDROID_PLATFORM: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
-      - uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8 # v1.42.0
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal --target ${{ matrix.target }} && rustup default "$RUST_VERSION"
+      - id: ndk
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         with:
-          target: ${{ matrix.target }}@30
-          runner: none
+          ndk-version: r29
+          add-to-path: false
+      - run: .github/android-env.sh ${{ matrix.target }} "${{ steps.ndk.outputs.ndk-path }}"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}

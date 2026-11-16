@@ -36,8 +36,8 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, features: cli }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, features: cli }
-          - { target: aarch64-apple-darwin, os: macos-14, features: cli }
-          - { target: x86_64-apple-darwin, os: macos-14, features: cli }
+          - { target: aarch64-apple-darwin, os: macos-15, features: cli }
+          - { target: x86_64-apple-darwin, os: macos-15, features: cli }
           - { target: aarch64-linux-android, os: ubuntu-22.04, features: android, android: true }
           - { target: armv7-linux-androideabi, os: ubuntu-22.04, features: android, android: true }
           - { target: x86_64-linux-android, os: ubuntu-22.04, features: android, android: true }
@@ -47,15 +47,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
+      - run: rustup toolchain install "$RUST_VERSION" --profile minimal --target ${{ matrix.target }} && rustup default "$RUST_VERSION"
       - if: matrix.android
-        uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8 # v1.42.0
+        id: ndk
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         with:
-          target: ${{ matrix.target }}@30
-          runner: none
+          ndk-version: r29
+          add-to-path: false
       - if: matrix.android
-        # build.rs reads it to tell whether Bionic has reallocarray.
-        run: echo "ANDROID_PLATFORM=30" >> "$GITHUB_ENV"
+        run: .github/android-env.sh ${{ matrix.target }} "${{ steps.ndk.outputs.ndk-path }}"
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: sepolicy-inject-rs
