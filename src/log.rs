@@ -35,4 +35,3 @@ pub fn log_warn(target: &str, message: &str) {
 pub fn log_error(target: &str, message: &str) {
     tracing::error!(target: FFI_TARGET, "{}: {}", target, message);
 }
-
