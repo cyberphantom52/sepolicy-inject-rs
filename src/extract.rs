@@ -37,6 +37,8 @@ impl SePolicy {
     ) -> Extraction {
         let attributes: Vec<String> = self.attribute_names().map(String::from).collect();
         let types: Vec<_> = self.type_decls().collect();
+        let is_attribute: HashSet<&str> = attributes.iter().map(String::as_str).collect();
+        let pair = |source: &str, target: &str| te_target(&is_attribute, source, target);
         let chosen: BTreeSet<&str> = attributes
             .iter()
             .map(String::as_str)
@@ -98,7 +100,7 @@ impl SePolicy {
                     let mut line = format!(
                         "{} {}:{} {{",
                         av.kind,
-                        te_target(&av.source, &av.target),
+                        pair(&av.source, &av.target),
                         av.class
                     );
                     for perm in av.perms() {
@@ -113,7 +115,7 @@ impl SePolicy {
                     format!(
                         "{} {}:{} {};",
                         t.kind,
-                        te_target(&t.source, &t.target),
+                        pair(&t.source, &t.target),
                         t.class,
                         t.default
                     ),
@@ -122,7 +124,7 @@ impl SePolicy {
                     let mut line = format!(
                         "{} {}:{} ioctl {{",
                         x.kind,
-                        te_target(&x.source, &x.target),
+                        pair(&x.source, &x.target),
                         x.class
                     );
                     for (low, high) in x.ioctls.ranges() {
@@ -141,7 +143,7 @@ impl SePolicy {
                 &[&t.source, &t.target, &t.default],
                 format!(
                     "type_transition {}:{} {} \"{}\";",
-                    te_target(&t.source, &t.target),
+                    pair(&t.source, &t.target),
                     t.class,
                     t.default,
                     t.name
@@ -170,9 +172,11 @@ impl SePolicy {
     }
 }
 
-/// `source target` of a rule, the target written `self` when it is the source.
-fn te_target(source: &str, target: &str) -> String {
-    if source == target {
+/// `source target` of a rule, the target written `self` when it is the source
+/// and a type. For an attribute, `self` would narrow the rule: `allow domain
+/// domain` lets any domain reach any other, `allow domain self` only itself.
+fn te_target(attributes: &HashSet<&str>, source: &str, target: &str) -> String {
+    if source == target && !attributes.contains(source) {
         format!("{source} self")
     } else {
         format!("{source} {target}")

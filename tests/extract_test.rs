@@ -66,3 +66,24 @@ fn holds_back_rules_needing_an_undefined_name() {
             .all(|r| !r.contains(" crash_dump:") && !r.ends_with(" crash_dump;"))
     );
 }
+
+#[test]
+fn keeps_an_attribute_rule_on_itself_whole() {
+    let extraction = policy().extract(|name| name == "appdomain", None);
+
+    assert!(
+        extraction
+            .rules
+            .iter()
+            .any(|r| r.starts_with("allow appdomain appdomain:")),
+        "{:#?}",
+        extraction.rules
+    );
+    assert!(
+        !extraction
+            .rules
+            .iter()
+            .any(|r| r.starts_with("allow appdomain self:")),
+        "self would narrow an attribute's rule to each type itself"
+    );
+}
