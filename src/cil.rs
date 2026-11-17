@@ -14,6 +14,23 @@ use crate::{
 /// A CIL policy database that sources are added to before validating,
 /// writing, or compiling it.
 ///
+/// Each source is parsed once, when it is added. Cloning a policy is cheap:
+/// the clone shares the parsed sources, so a base such as the platform policy
+/// can be loaded once and each variant built on a clone of it.
+///
+/// ```no_run
+/// # fn main() -> sepolicy::Result<()> {
+/// use sepolicy::CilPolicy;
+///
+/// let base = CilPolicy::from_files(["plat_sepolicy.cil", "plat_pub_versioned.cil"])?;
+/// for (name, patch) in [("a.cil", "(type a_t)"), ("b.cil", "(type b_t)")] {
+///     let compiled = base.clone().add_file_named(name, patch)?.compile()?;
+///     # drop(compiled);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
 /// # Thread safety
 ///
 /// Every call that reaches libsepol takes a crate-wide lock, so separate
@@ -32,6 +49,23 @@ use crate::{
 /// ```
 pub struct CilPolicy {
     inner: UniquePtr<CilPolicyImpl>,
+}
+
+impl Clone for CilPolicy {
+    /// A policy holding the same sources, sharing their parse trees.
+    fn clone(&self) -> Self {
+        CilPolicy {
+            inner: self.with(|p| p.clone()),
+        }
+    }
+}
+
+impl Drop for CilPolicy {
+    fn drop(&mut self) {
+        // Freeing the parsed sources reaches libsepol.
+        let _guard = lock::libsepol();
+        drop(std::mem::replace(&mut self.inner, UniquePtr::null()));
+    }
 }
 
 impl Default for CilPolicy {
@@ -697,6 +731,63 @@ mod tests {
         );
         assert_eq!(statement_at(text, 4).as_deref(), Some("(type b_t)"));
         assert_eq!(statement_at(text, 9), None);
+    }
+
+    #[test]
+    fn test_clone_shares_a_base_between_variants() {
+        let source = cil_fixture_path("test_handle.cil");
+        let base = CilPolicy::from_file(&source).expect("failed to load base CIL fixture");
+        let base_cil = base.to_cil().expect("failed to render base");
+
+        let variant = |name: &str| {
+            let patch = crate::parser::parse(&format!(
+                "type {name}_t;\nallow {name}_t self:test_class test_perm;"
+            ))
+            .expect("failed to parse TE patch");
+            base.clone()
+                .add_policy_named(&format!("{name}.te"), &patch)
+                .expect("failed to add the variant's patch")
+        };
+
+        let mut a = variant("clone_a");
+        let mut b = variant("clone_b");
+        let a_rules = a.compile().expect("variant a should compile").avtabs();
+        let b_rules = b.compile().expect("variant b should compile").avtabs();
+
+        let has = |rules: &[String], ty: &str| {
+            rules
+                .iter()
+                .any(|rule| rule.starts_with(&format!("allow {ty} {ty} test_class")))
+        };
+        assert!(has(&a_rules, "clone_a_t") && !has(&a_rules, "clone_b_t"));
+        assert!(has(&b_rules, "clone_b_t") && !has(&b_rules, "clone_a_t"));
+
+        // The base is untouched, and still usable once its clones are gone.
+        drop((a, b));
+        assert_eq!(base.to_cil().expect("failed to render base"), base_cil);
+        let mut base = base;
+        base.compile().expect("the base should still compile");
+    }
+
+    #[test]
+    fn test_clone_errors_name_inputs_of_the_base() {
+        let base = CilPolicy::new()
+            .add_file_named("base.cil", "(allow missing_t missing_t (file (read)))")
+            .expect("failed to add base");
+        let err = base
+            .clone()
+            .add_file_named("patch.cil", "(type patch_t)")
+            .expect("failed to add patch")
+            .validate()
+            .expect_err("the base names undeclared types");
+        let Error::CilValidate(error) = err else {
+            panic!("unexpected error: {err:?}");
+        };
+        let location = error
+            .location()
+            .unwrap_or_else(|| panic!("no location in {error:?}"));
+        assert_eq!(location.input.as_deref(), Some("base.cil"), "{error:?}");
+        assert_eq!(location.line, Some(1), "{error:?}");
     }
 
     #[test]
