@@ -5,7 +5,7 @@ use cxx::UniquePtr;
 
 use crate::{
     SePolicy,
-    error::{Error, Result, read_to_string},
+    error::{CilDiagnostic, CilError, Error, Result, read_to_string},
     ffi::{CilPolicyImpl, cil_new_impl},
     lock,
     parser::{ToCil, ast::Policy},
@@ -69,7 +69,9 @@ impl CilPolicy {
     ///
     /// Files are loaded in the exact order they are yielded by the iterator.
     /// This is useful for validation where a patched single-file CIL needs
-    /// extra context from other CIL files.
+    /// extra context from other CIL files. Each file is added under its path,
+    /// as given, which errors then name it by; a path given twice is added
+    /// the second time under a generated name.
     pub fn from_files<P, I>(paths: I) -> Result<Self>
     where
         P: AsRef<Path>,
@@ -78,8 +80,14 @@ impl CilPolicy {
         let mut policy = Self::new();
 
         for path in paths {
-            let source = read_to_string(path.as_ref())?;
-            policy = policy.add_file(&source)?;
+            let path = path.as_ref();
+            let source = read_to_string(path)?;
+            let name = path.display().to_string();
+            policy = if policy.has_input(&name) {
+                policy.add_file(&source)?
+            } else {
+                policy.add_file_named(&name, &source)?
+            };
         }
 
         Ok(policy)
@@ -87,36 +95,115 @@ impl CilPolicy {
 
     /// Validate the loaded CIL database by building and resolving its AST.
     pub fn validate(&mut self) -> Result<()> {
-        if !self.with_mut(|p| p.validate()) {
-            return Err(Error::CilValidate);
+        let mut errors = Vec::new();
+        if !self.with_mut(|p| p.validate(&mut errors)) {
+            return Err(Error::CilValidate(self.diagnose(errors, None)));
         }
 
         Ok(())
     }
 
     /// Compile the loaded CIL database into a [`SePolicy`].
+    ///
+    /// On failure the error carries what libsepol reported, with the input,
+    /// line and statement each message points at; see [`CilError`].
     pub fn compile(&mut self) -> Result<SePolicy> {
-        SePolicy::from_impl(self.with_mut(|p| p.compile())).ok_or(Error::CilCompile)
+        let mut errors = Vec::new();
+        let compiled = self.with_mut(|p| p.compile(&mut errors));
+        SePolicy::from_impl(compiled).ok_or_else(|| Error::CilCompile(self.diagnose(errors, None)))
     }
 
-    /// Add CIL source text to the policy database.
-    pub fn add_file(mut self, source: &str) -> Result<Self> {
-        if !self.with_mut(|p| p.add_file(source)) {
-            return Err(Error::CilAdd);
+    /// Add CIL source text to the policy database under a generated name,
+    /// `input_<n>.cil`, numbered within this policy.
+    pub fn add_file(self, source: &str) -> Result<Self> {
+        let name = self.with(|p| p.next_name());
+        self.add_file_named(&name, source)
+    }
+
+    /// Add CIL source text to the policy database under `name`.
+    ///
+    /// Errors from [`validate`](Self::validate) and [`compile`](Self::compile)
+    /// name the input a failing statement came from, so a caller adding one
+    /// input per patch can tell which patch broke the policy. Names must be
+    /// unique within a policy.
+    pub fn add_file_named(mut self, name: &str, source: &str) -> Result<Self> {
+        if name.is_empty() || self.has_input(name) {
+            return Err(Error::CilInputName(name.to_owned()));
+        }
+        if source.is_empty() {
+            return Err(Error::CilAdd(CilError {
+                diagnostics: vec![CilDiagnostic {
+                    message: format!("CIL input {name} is empty"),
+                    input: Some(name.to_owned()),
+                    line: None,
+                    statement: None,
+                }],
+            }));
+        }
+
+        let mut errors = Vec::new();
+        if !self.with_mut(|p| p.add_file(name, source, &mut errors)) {
+            return Err(Error::CilAdd(self.diagnose(errors, Some((name, source)))));
         }
         Ok(self)
     }
 
-    /// Render a parsed TE policy into CIL and add it to the policy database.
+    /// Render a parsed TE policy into CIL and add it to the policy database
+    /// under a generated name.
     pub fn add_policy(self, policy: &Policy) -> Result<Self> {
-        let rendered = policy.to_cil().ok_or(Error::CilRender)?;
-
-        if rendered.is_empty() {
-            return Err(Error::EmptyPatch);
-        }
-
-        let source = rendered.join("\n");
+        let source = render_policy(policy)?;
         self.add_file(&source)
+    }
+
+    /// Render a parsed TE policy into CIL and add it to the policy database
+    /// under `name`, as [`add_file_named`](Self::add_file_named) does.
+    pub fn add_policy_named(self, name: &str, policy: &Policy) -> Result<Self> {
+        let source = render_policy(policy)?;
+        self.add_file_named(name, &source)
+    }
+
+    /// Whether an input called `name` is loaded.
+    fn has_input(&self, name: &str) -> bool {
+        self.with(|p| !p.source_text(name).is_empty())
+    }
+
+    /// Turn the error messages libsepol logged into a [`CilError`], locating
+    /// each in the loaded inputs or in `pending`, an input being added.
+    fn diagnose(&self, errors: Vec<String>, pending: Option<(&str, &str)>) -> CilError {
+        let _guard = lock::libsepol();
+        let text_of = |name: &str| -> Option<&str> {
+            if let Some((pending_name, text)) = pending
+                && pending_name == name
+            {
+                return Some(text);
+            }
+            std::str::from_utf8(self.inner.source_text(name))
+                .ok()
+                .filter(|text| !text.is_empty())
+        };
+
+        let diagnostics = errors
+            .into_iter()
+            .map(|message| {
+                let located = locate(&message, |name| text_of(name).is_some())
+                    .map(|(input, line)| (input.to_owned(), line));
+                let Some((input, line)) = located else {
+                    return CilDiagnostic {
+                        message,
+                        input: None,
+                        line: None,
+                        statement: None,
+                    };
+                };
+                CilDiagnostic {
+                    statement: text_of(&input).and_then(|text| statement_at(text, line)),
+                    input: Some(input),
+                    line: Some(line),
+                    message,
+                }
+            })
+            .collect();
+        CilError { diagnostics }
     }
 
     /// Render the loaded CIL database as merged CIL source.
@@ -185,6 +272,98 @@ impl CilPolicy {
         let mut policy = Self::from_files(paths)?;
         policy.compile()
     }
+}
+
+/// Render a TE policy into CIL source text.
+fn render_policy(policy: &Policy) -> Result<String> {
+    let rendered = policy.to_cil().ok_or(Error::CilRender)?;
+    if rendered.is_empty() {
+        return Err(Error::EmptyPatch);
+    }
+    Ok(rendered.join("\n"))
+}
+
+/// Find the input and line a libsepol message points at.
+///
+/// Statements are reported as `<message> at <input>:<line>`, followed by
+/// ` from <file>:<line>` for each line marker around them, and syntax errors
+/// as `<message> at line <line> of <input>`. Only names `is_input` accepts
+/// count, so an ` at ` inside the message itself is skipped.
+fn locate<'m>(message: &'m str, is_input: impl Fn(&str) -> bool) -> Option<(&'m str, u32)> {
+    let found = |name: &'m str, line: &str| -> Option<(&'m str, u32)> {
+        let line = line.parse().ok()?;
+        is_input(name).then_some((name, line))
+    };
+
+    for (at, _) in message.match_indices(" at ") {
+        let rest = &message[at + " at ".len()..];
+        if let Some(rest) = rest.strip_prefix("line ")
+            && let Some((line, name)) = rest.split_once(" of ")
+            && let Some(found) = found(name, line)
+        {
+            return Some(found);
+        }
+        let rest = rest.split(" from ").next().unwrap_or(rest);
+        if let Some((name, line)) = rest.rsplit_once(':')
+            && let Some(found) = found(name, line)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The statement starting on the 1-based `line` of `text`: from the first
+/// `(` on that line to its matching `)`. Falls back to the line itself when
+/// the line opens no statement or the statement never closes, as with a
+/// syntax error.
+fn statement_at(text: &str, line: u32) -> Option<String> {
+    let start = text
+        .split_inclusive('\n')
+        .take(usize::try_from(line).ok()?.checked_sub(1)?)
+        .map(str::len)
+        .sum::<usize>();
+    let rest = text.get(start..)?;
+    let line_text = rest.lines().next()?.trim();
+
+    let fallback = || (!line_text.is_empty()).then(|| line_text.to_owned());
+    let Some(open) = line_text.find('(') else {
+        return fallback();
+    };
+    if line_text[..open].contains(';') {
+        return fallback();
+    }
+
+    let rest = &rest[rest.find('(')?..];
+    let mut depth = 0usize;
+    let mut chars = rest.char_indices();
+    while let Some((i, ch)) = chars.next() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[..=i].to_owned());
+                }
+            }
+            '"' => {
+                for (_, ch) in chars.by_ref() {
+                    if ch == '"' {
+                        break;
+                    }
+                }
+            }
+            ';' => {
+                for (_, ch) in chars.by_ref() {
+                    if ch == '\n' {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    fallback()
 }
 
 #[cfg(test)]
@@ -424,6 +603,100 @@ mod tests {
             .to_cil()
             .expect("failed to render CIL");
         assert_eq!(out, ";;* lmx 7 vendor.te\n(type marked_t)\n;;* lme\n");
+    }
+
+    #[test]
+    fn test_compile_error_names_the_failing_statement() {
+        let source = cil_fixture_path("test_handle.cil");
+        let good =
+            crate::parser::parse("type err_good_t;\nallow err_good_t self:test_class test_perm;")
+                .expect("failed to parse TE patch");
+        let bad = crate::parser::parse(
+            "type err_bad_t;\nallow err_bad_t err_missing_t:test_class test_perm;",
+        )
+        .expect("failed to parse TE patch");
+
+        let mut policy = CilPolicy::from_file(&source)
+            .expect("failed to load base CIL fixture")
+            .add_policy_named("good.te", &good)
+            .expect("failed to add the good patch")
+            .add_policy_named("bad.te", &bad)
+            .expect("failed to add the bad patch");
+
+        for result in [policy.compile().map(drop), policy.validate()] {
+            let (Err(Error::CilCompile(error)) | Err(Error::CilValidate(error))) = result else {
+                panic!("the policy should not resolve: {result:?}");
+            };
+            let location = error
+                .location()
+                .unwrap_or_else(|| panic!("no location in {error:?}"));
+            assert_eq!(location.input.as_deref(), Some("bad.te"), "{error:?}");
+            assert_eq!(location.line, Some(3), "{error:?}");
+            assert_eq!(
+                location.statement.as_deref(),
+                Some("(allow err_bad_t err_missing_t (test_class (test_perm)))"),
+                "{error:?}"
+            );
+            assert!(location.message.contains("bad.te:3"), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn test_add_file_error_names_the_bad_line() {
+        let err = CilPolicy::new()
+            .add_file_named("syntax.cil", "(type ok_t)\n(type broken_t\n")
+            .map(drop)
+            .expect_err("an unclosed statement should not parse");
+        let Error::CilAdd(error) = err else {
+            panic!("unexpected error: {err:?}");
+        };
+        let location = error
+            .location()
+            .unwrap_or_else(|| panic!("no location in {error:?}"));
+        assert_eq!(location.input.as_deref(), Some("syntax.cil"), "{error:?}");
+    }
+
+    #[test]
+    fn test_input_names_must_be_unique() {
+        let err = CilPolicy::new()
+            .add_file_named("a.cil", "(type a_t)")
+            .and_then(|p| p.add_file_named("a.cil", "(type b_t)"))
+            .map(drop)
+            .expect_err("a second input named a.cil should be refused");
+        assert!(matches!(err, Error::CilInputName(name) if name == "a.cil"));
+    }
+
+    #[test]
+    fn test_locate_reads_both_message_forms() {
+        let known = |name: &str| matches!(name, "vendor.cil" | "dir with space/x.cil");
+        assert_eq!(
+            locate(
+                "Failed to resolve allow statement at vendor.cil:12 from foo.te:3",
+                known
+            ),
+            Some(("vendor.cil", 12))
+        );
+        assert_eq!(
+            locate(
+                "Open parenthesis without matching close at line 4 of dir with space/x.cil",
+                known
+            ),
+            Some(("dir with space/x.cil", 4))
+        );
+        assert_eq!(locate("Name at other.cil:3 is unknown", known), None);
+        assert_eq!(locate("Failed to resolve AST", known), None);
+    }
+
+    #[test]
+    fn test_statement_at_spans_lines_and_skips_strings() {
+        let text = "(type a_t)\n  (genfscon sysfs \"/a)b\"\n    ctx) ; trailing\n(type b_t)";
+        assert_eq!(statement_at(text, 1).as_deref(), Some("(type a_t)"));
+        assert_eq!(
+            statement_at(text, 2).as_deref(),
+            Some("(genfscon sysfs \"/a)b\"\n    ctx)")
+        );
+        assert_eq!(statement_at(text, 4).as_deref(), Some("(type b_t)"));
+        assert_eq!(statement_at(text, 9), None);
     }
 
     #[test]

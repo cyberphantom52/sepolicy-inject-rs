@@ -5,6 +5,7 @@
 #include <optional>
 #include <rust/cxx.h>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -28,11 +29,20 @@ class CilPolicyImpl {
   unique_cil_db new_db() const noexcept;
   unique_cil_db build_db() const noexcept;
   std::string next_input_name() const;
+  bool has_source(std::string_view name) const noexcept;
+  bool add_file(std::string name, const char *source, size_t size) noexcept;
 
 public:
   CilPolicyImpl();
 
-  bool add_file(rust::Str source) noexcept;
+  // The bridge's entry points collect the error messages libsepol logs.
+  bool add_file(rust::Str name, rust::Str source,
+                rust::Vec<rust::String> &errors) noexcept;
+  bool validate(rust::Vec<rust::String> &errors) noexcept;
+  std::unique_ptr<SePolicyImpl> compile(rust::Vec<rust::String> &errors) noexcept;
+  rust::Slice<const uint8_t> source_text(rust::Str name) const noexcept;
+  rust::String next_name() const noexcept;
+
   bool add_file(const char *source, size_t size) noexcept;
   bool validate() noexcept;
   bool to_cil(rust::String &out) const noexcept;
