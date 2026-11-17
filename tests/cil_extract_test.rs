@@ -70,3 +70,16 @@ fn lists_declared_types_attributes_and_aliases() {
         "a role is not a type: {declared:?}"
     );
 }
+
+#[test]
+fn lists_declarations_of_text_alone() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/extract_label.cil");
+    let text = std::fs::read_to_string(&path).expect("fixture reads");
+    let from_text = sepolicy::cil::declared_types(&text).expect("declarations are read");
+    let from_policy = CilPolicy::from_file(&path)
+        .expect("fixture loads")
+        .declared_types()
+        .expect("declarations are read");
+    assert!(!from_text.is_empty());
+    assert_eq!(from_text, from_policy);
+}

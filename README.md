@@ -212,6 +212,35 @@ policy.allow(
 policy.permissive(&["my_domain_t"]);
 ```
 
+CIL policies are built with `CilPolicy`. A base is parsed once and cloned for
+each variant, and a compile error names the input, line and statement libsepol
+rejected:
+
+```rust
+use sepolicy::{CilPolicy, Error};
+
+let base = CilPolicy::from_files(["plat_sepolicy.cil", "plat_pub_versioned.cil"])?;
+
+let patched = base
+    .clone()
+    .add_file_named("vendor_sepolicy.cil", &vendor_cil)?
+    .add_policy_named("camera.te", &camera_patch)?;
+
+match patched.clone().compile() {
+    Ok(compiled) => { /* ... */ }
+    Err(Error::CilCompile(error)) => {
+        if let Some(at) = error.location() {
+            // e.g. camera.te, line 3, "(allow camera_t missing_t (file (read)))"
+            eprintln!("{:?}:{:?}: {:?}", at.input, at.line, at.statement);
+        }
+    }
+    Err(e) => return Err(e),
+}
+
+// The same inputs always render to the same bytes.
+let merged = patched.to_cil()?;
+```
+
 ### Example .te File
 
 ```te
