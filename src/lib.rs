@@ -238,6 +238,8 @@ mod ffi {
         fn extract_label(self: &CilPolicyImpl, label: &str, out: &mut Vec<String>) -> bool;
         fn declared_types(self: &CilPolicyImpl, out: &mut Vec<String>) -> bool;
 
+        fn clone(self: &CilPolicyImpl) -> UniquePtr<CilPolicyImpl>;
+
         fn cil_new_impl() -> UniquePtr<CilPolicyImpl>;
     }
 }

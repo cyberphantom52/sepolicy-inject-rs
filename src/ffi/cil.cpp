@@ -426,18 +426,44 @@ unique_cil_db CilPolicyImpl::new_db() const noexcept {
   return db;
 }
 
-// Fresh database with every source added so far, or null if one fails to parse.
+// Append a copy of the children of the parse node `from` to `to`. Parse nodes
+// hold only strings from libsepol's string pool, which lives as long as any
+// database does, so the copy can point at the same strings.
+static void copy_parse_children(const struct cil_tree_node *from,
+                                struct cil_tree_node *to) {
+  for (const struct cil_tree_node *child = from->cl_head; child != nullptr;
+       child = child->next) {
+    struct cil_tree_node *node = nullptr;
+    cil_tree_node_init(&node);
+    node->parent = to;
+    node->flavor = child->flavor;
+    node->line = child->line;
+    node->hll_offset = child->hll_offset;
+    node->data = child->data;
+
+    if (to->cl_head == nullptr) {
+      to->cl_head = node;
+    } else {
+      to->cl_tail->next = node;
+    }
+    to->cl_tail = node;
+
+    copy_parse_children(child, node);
+  }
+}
+
+// Fresh database with every source added so far, as if each had been parsed
+// into it in order.
 unique_cil_db CilPolicyImpl::build_db() const noexcept {
   auto db = new_db();
-  for (const auto &[name, source] : sources) {
-    if (cil_add_file(db.get(), name.c_str(), source.data(), source.size()) !=
-        SEPOL_OK) {
-      log_error(CIL_LOG_TARGET,
-                std::string("Failed to parse CIL source: ") + name);
-      return nullptr;
-    }
+  for (const auto &source : sources) {
+    copy_parse_children(source->parsed->parse->root, db->parse->root);
   }
   return db;
+}
+
+std::unique_ptr<CilPolicyImpl> CilPolicyImpl::clone() const noexcept {
+  return std::make_unique<CilPolicyImpl>(*this);
 }
 
 std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept {
@@ -446,7 +472,7 @@ std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept {
 
 bool CilPolicyImpl::has_source(std::string_view name) const noexcept {
   for (const auto &source : sources) {
-    if (source.first == name) {
+    if (source->name == name) {
       return true;
     }
   }
@@ -468,9 +494,9 @@ rust::Slice<const uint8_t>
 CilPolicyImpl::source_text(rust::Str name) const noexcept {
   std::string_view wanted(name.data(), name.size());
   for (const auto &source : sources) {
-    if (source.first == wanted) {
-      return {reinterpret_cast<const uint8_t *>(source.second.data()),
-              source.second.size()};
+    if (source->name == wanted) {
+      return {reinterpret_cast<const uint8_t *>(source->text.data()),
+              source->text.size()};
     }
   }
   return {};
@@ -507,8 +533,8 @@ bool CilPolicyImpl::add_file(std::string name, const char *source,
     return false;
   }
 
-  // Parse into a scratch database so syntax errors surface here rather than
-  // at the next validate, write or compile.
+  // Parse once, here, so syntax errors surface now rather than at the next
+  // validate, write or compile. Later operations copy this parse tree.
   auto db = new_db();
   if (cil_add_file(db.get(), name.c_str(), source, size) != SEPOL_OK) {
     log_error(CIL_LOG_TARGET,
@@ -518,7 +544,8 @@ bool CilPolicyImpl::add_file(std::string name, const char *source,
   log_debug(CIL_LOG_TARGET,
             std::string("Successfully loaded in-memory CIL source: ") + name +
                 " (" + std::to_string(size) + " bytes)");
-  sources.emplace_back(std::move(name), std::string(source, size));
+  sources.push_back(std::make_shared<const CilSource>(
+      CilSource{std::move(name), std::string(source, size), std::move(db)}));
   return true;
 }
 
@@ -618,7 +645,7 @@ bool CilPolicyImpl::to_cil(rust::String &out) const noexcept {
   if (ok) {
     std::unordered_set<std::string_view> inputs;
     for (const auto &source : sources) {
-      inputs.insert(source.first);
+      inputs.insert(source->name);
     }
     out = rust::String::lossy(
         strip_input_markers(std::string_view(buf, size), inputs));

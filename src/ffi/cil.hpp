@@ -18,12 +18,24 @@ struct cil_db_deleter {
 
 using unique_cil_db = std::unique_ptr<cil_db_t, cil_db_deleter>;
 
+// One input: its name, its text, and a database holding only its parse tree.
+// The parse tree is never built, so it stays as cil_parser left it, and is
+// shared by every policy cloned from the one it was added to.
+struct CilSource {
+  std::string name;
+  std::string text;
+  unique_cil_db parsed;
+};
+
 // libsepol consumes a cil_db_t's parse tree when it builds the AST, so a
-// database supports a single validate, write or compile. CilPolicyImpl keeps
-// the (name, source) pairs it was given and replays them into a fresh
-// database for each operation.
+// database supports a single validate, write or compile. CilPolicyImpl parses
+// each input once and copies the parse trees into a fresh database for each
+// operation, which skips lexing the text again.
+//
+// Destroying a CilSource frees libsepol memory, so copies and destruction of
+// a CilPolicyImpl need the libsepol lock, as every other call does.
 class CilPolicyImpl {
-  std::vector<std::pair<std::string, std::string>> sources;
+  std::vector<std::shared_ptr<const CilSource>> sources;
   std::optional<int> policy_version;
 
   unique_cil_db new_db() const noexcept;
@@ -34,6 +46,10 @@ class CilPolicyImpl {
 
 public:
   CilPolicyImpl();
+  CilPolicyImpl(const CilPolicyImpl &) = default;
+
+  // A policy holding the same inputs, which shares their parse trees.
+  std::unique_ptr<CilPolicyImpl> clone() const noexcept;
 
   // The bridge's entry points collect the error messages libsepol logs.
   bool add_file(rust::Str name, rust::Str source,
