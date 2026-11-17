@@ -71,10 +71,10 @@ where
 mod tests {
     use super::*;
     use crate::parser::ast::{AVRuleType, Statement};
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
-    fn ids(names: &[&str]) -> HashSet<String> {
+    fn ids(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|name| name.to_string()).collect()
     }
 

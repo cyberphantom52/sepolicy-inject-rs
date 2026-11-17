@@ -1,12 +1,13 @@
 //! AST types for SELinux type enforcement (.te) files.
 
 use crate::ffi::XPerm;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
-/// A set of identifiers with optional complement flag.
+/// A set of identifiers with optional complement flag. Identifiers are kept
+/// sorted, so a set renders the same way every time.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IdSet {
-    pub ids: HashSet<String>,
+    pub ids: BTreeSet<String>,
     pub complement: bool,
 }
 

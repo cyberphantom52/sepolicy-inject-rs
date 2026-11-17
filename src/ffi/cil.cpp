@@ -1,7 +1,6 @@
 #include "sepolicy-inject-rs/src/lib.rs.h"
 #include "utils.hpp"
 
-#include <atomic>
 #include <cil/cil.h>
 #include <memory>
 
@@ -20,16 +19,10 @@ extern "C" {
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 // Logging target for CIL operations
 static constexpr const char *CIL_LOG_TARGET = "sepolicy::cil";
-static std::atomic_size_t NEXT_CIL_SOURCE_ID{1};
-
-static std::string next_generated_cil_name() {
-  auto id = NEXT_CIL_SOURCE_ID.fetch_add(1, std::memory_order_relaxed);
-  return std::string("generated_input_") + std::to_string(id) + ".cil";
-}
-
 
 // Setup CIL log handler to route messages through Rust's tracing
 static void setup_cil_logging() {
@@ -401,8 +394,14 @@ bool CilPolicyImpl::add_file(rust::Str source) noexcept {
   return add_file(source.data(), source.size());
 }
 
+// Inputs are numbered within their policy, so a name depends only on how many
+// sources the policy already holds.
+std::string CilPolicyImpl::next_input_name() const {
+  return "input_" + std::to_string(sources.size() + 1) + ".cil";
+}
+
 bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
-  auto name = next_generated_cil_name();
+  auto name = next_input_name();
   log_trace(CIL_LOG_TARGET,
             std::string("Loading in-memory CIL source: ") + name);
 
@@ -447,6 +446,52 @@ bool CilPolicyImpl::validate() noexcept {
   return true;
 }
 
+// cil_write_build_ast wraps each input in a `;;* lms 1 <name>` ... `;;* lme`
+// pair. Input names are internal to this policy, so drop those pairs and keep
+// only the line markers the sources themselves carry. libsepol writes every
+// marker at the start of its own line, and comments are not kept in the AST,
+// so a line starting with `;;*` is always a marker.
+static std::string strip_input_markers(std::string_view text,
+                                       const std::unordered_set<std::string_view> &inputs) {
+  std::string out;
+  out.reserve(text.size());
+  // One entry per open marker: whether it wraps one of the inputs.
+  std::vector<bool> open;
+
+  while (!text.empty()) {
+    size_t end = text.find('\n');
+    std::string_view line =
+        end == std::string_view::npos ? text : text.substr(0, end + 1);
+    text.remove_prefix(line.size());
+
+    std::string_view body = line;
+    if (!body.empty() && body.back() == '\n') {
+      body.remove_suffix(1);
+    }
+
+    bool keep = true;
+    if (body == ";;* lme") {
+      if (!open.empty()) {
+        keep = !open.back();
+        open.pop_back();
+      }
+    } else if (body.starts_with(";;* ")) {
+      // `;;* <kind> <line> <path>`
+      bool input = false;
+      if (open.empty() && body.starts_with(";;* lms 1 ")) {
+        input = inputs.contains(body.substr(std::string_view(";;* lms 1 ").size()));
+      }
+      open.push_back(input);
+      keep = !input;
+    }
+
+    if (keep) {
+      out.append(line);
+    }
+  }
+  return out;
+}
+
 bool CilPolicyImpl::to_cil(rust::String &out) const noexcept {
   log_debug(CIL_LOG_TARGET, "Rendering merged CIL AST");
 
@@ -464,7 +509,12 @@ bool CilPolicyImpl::to_cil(rust::String &out) const noexcept {
   std::fclose(fp);
 
   if (ok) {
-    out = rust::String::lossy(buf, size);
+    std::unordered_set<std::string_view> inputs;
+    for (const auto &source : sources) {
+      inputs.insert(source.first);
+    }
+    out = rust::String::lossy(
+        strip_input_markers(std::string_view(buf, size), inputs));
     log_debug(CIL_LOG_TARGET, "Rendered merged CIL AST (" +
                                   std::to_string(size) + " bytes)");
   } else {

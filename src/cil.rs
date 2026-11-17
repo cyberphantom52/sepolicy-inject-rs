@@ -361,6 +361,72 @@ mod tests {
     }
 
     #[test]
+    fn test_to_cil_is_deterministic() {
+        let source = cil_fixture_path("test_handle.cil");
+        // Multi-member type sets go through a helper attribute, and permission
+        // sets once came out in hash order.
+        let patch = crate::parser::parse(
+            "type det_a_t;\ntype det_b_t;\n\
+             allow { det_a_t det_b_t } { det_b_t test_t }:test_class { test_perm open read write getattr map };",
+        )
+        .expect("failed to parse TE patch");
+
+        let render = || {
+            CilPolicy::from_file(&source)
+                .expect("failed to load base CIL fixture")
+                .add_policy(&patch)
+                .expect("failed to apply TE patch to CIL")
+                .to_cil()
+                .expect("failed to render CIL")
+        };
+
+        let first = render();
+        assert_eq!(first, render(), "rendering the same inputs twice differed");
+        assert!(
+            !first.contains(";;* lms"),
+            "to_cil should not carry input markers:\n{first}"
+        );
+        assert!(
+            first.contains("(getattr map open read test_perm write)"),
+            "permission sets should render sorted:\n{first}"
+        );
+        assert!(
+            first.contains("(typeattributeset base_typeattr_"),
+            "the type sets should render through a helper attribute:\n{first}"
+        );
+    }
+
+    #[test]
+    fn test_to_cil_output_is_pinned() {
+        // Exact bytes, so output that varies between processes or releases,
+        // such as a hash-derived name, fails here rather than on a device.
+        let patch = crate::parser::parse("allow { b_t a_t } c_t:file { write read };")
+            .expect("failed to parse TE patch");
+        let out = CilPolicy::new()
+            .add_policy(&patch)
+            .expect("failed to add patch")
+            .to_cil()
+            .expect("failed to render CIL");
+        assert_eq!(
+            out,
+            "(typeattribute base_typeattr_11f50735ac8101a3)\n\
+             (typeattributeset base_typeattr_11f50735ac8101a3 (a_t b_t))\n\
+             (allow base_typeattr_11f50735ac8101a3 c_t (file (read write)))\n"
+        );
+    }
+
+    #[test]
+    fn test_to_cil_keeps_markers_from_the_sources() {
+        let marked = ";;* lmx 7 vendor.te\n(type marked_t)\n;;* lme\n";
+        let out = CilPolicy::new()
+            .add_file(marked)
+            .expect("failed to add marked source")
+            .to_cil()
+            .expect("failed to render CIL");
+        assert_eq!(out, ";;* lmx 7 vendor.te\n(type marked_t)\n;;* lme\n");
+    }
+
+    #[test]
     fn test_contexts_render_as_valid_cil_levelranges() {
         let source = cil_fixture_path("test_handle.cil");
         // Categories and a user whose range covers them.

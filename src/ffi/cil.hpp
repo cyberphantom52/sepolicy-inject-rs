@@ -27,6 +27,7 @@ class CilPolicyImpl {
 
   unique_cil_db new_db() const noexcept;
   unique_cil_db build_db() const noexcept;
+  std::string next_input_name() const;
 
 public:
   CilPolicyImpl();
