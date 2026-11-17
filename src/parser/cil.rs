@@ -1,14 +1,11 @@
 use super::ast::*;
 use crate::ffi::XPerm;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::warn;
 
 /// Trait for types that can be converted to CIL format.
 pub trait ToCil {
     fn to_cil(&self) -> Option<Vec<String>>;
 }
-
-static NEXT_TYPE_HELPER_ATTR: AtomicUsize = AtomicUsize::new(1);
 
 impl ToCil for Policy {
     fn to_cil(&self) -> Option<Vec<String>> {
@@ -556,9 +553,18 @@ fn direct_type_ref(set: &IdSet, allow_special_target: bool) -> Option<String> {
     Some(id.clone())
 }
 
-fn next_type_helper_attr_name() -> String {
-    let counter = NEXT_TYPE_HELPER_ATTR.fetch_add(1, Ordering::Relaxed);
-    format!("base_typeattr_{}", counter)
+/// Name of the helper attribute standing for the type expression `expr`.
+///
+/// The name is derived from the expression alone, so rendering the same rule
+/// gives the same name in every run. Equal expressions share one attribute,
+/// whose repeated declarations CIL accepts with multiple declarations on, as
+/// Android's init compiles with.
+fn type_helper_attr_name(expr: &str) -> String {
+    // FNV-1a: unlike std's hashers, its output is fixed across Rust releases.
+    let hash = expr.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("base_typeattr_{hash:016x}")
 }
 
 fn render_type_ref(set: &IdSet, allow_special_target: bool) -> Option<(String, Vec<String>)> {
@@ -567,7 +573,7 @@ fn render_type_ref(set: &IdSet, allow_special_target: bool) -> Option<(String, V
     }
 
     let expr = render_id_expression(set, true)?;
-    let helper = next_type_helper_attr_name();
+    let helper = type_helper_attr_name(&expr);
 
     Some((
         helper.clone(),
