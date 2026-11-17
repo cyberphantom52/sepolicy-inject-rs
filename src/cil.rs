@@ -1,3 +1,5 @@
+//! CIL policies: [`CilPolicy`], and reading CIL text without one.
+
 use std::path::Path;
 use std::pin::Pin;
 
@@ -306,6 +308,24 @@ impl CilPolicy {
         let mut policy = Self::from_files(paths)?;
         policy.compile()
     }
+}
+
+/// The types, attributes and type aliases CIL source text declares, as
+/// written there.
+///
+/// The text is only parsed, not resolved, so it may name types it does not
+/// declare. This is [`CilPolicy::declared_types`] for a single text, without
+/// keeping a policy around.
+///
+/// ```
+/// let declared = sepolicy::cil::declared_types(
+///     "(type vendor_t)\n(typeattribute vendor_attr)\n(allow vendor_t other_t (file (read)))",
+/// )?;
+/// assert_eq!(declared.into_iter().collect::<Vec<_>>(), ["vendor_attr", "vendor_t"]);
+/// # Ok::<(), sepolicy::Error>(())
+/// ```
+pub fn declared_types(text: &str) -> Result<std::collections::BTreeSet<String>> {
+    CilPolicy::new().add_file(text)?.declared_types()
 }
 
 /// Render a TE policy into CIL source text.

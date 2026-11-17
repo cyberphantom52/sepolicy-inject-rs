@@ -1,4 +1,4 @@
-mod cil;
+pub mod cil;
 mod error;
 mod extract;
 mod lock;
