@@ -44,14 +44,17 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("failed to add CIL source")]
-    CilAdd,
+    #[error("failed to add CIL source: {0}")]
+    CilAdd(CilError),
 
-    #[error("failed to validate CIL policy")]
-    CilValidate,
+    #[error("a CIL input named {0:?} is already loaded")]
+    CilInputName(String),
 
-    #[error("failed to compile CIL policy")]
-    CilCompile,
+    #[error("failed to validate CIL policy: {0}")]
+    CilValidate(CilError),
+
+    #[error("failed to compile CIL policy: {0}")]
+    CilCompile(CilError),
 
     #[error("failed to serialize CIL policy")]
     CilSerialize,
@@ -93,6 +96,54 @@ pub enum Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// What libsepol reported when it rejected a CIL policy.
+///
+/// libsepol usually reports the statement that failed first, then the
+/// stages that failed because of it, such as `Failed to resolve AST`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CilError {
+    /// Each error message, in the order libsepol logged it.
+    pub diagnostics: Vec<CilDiagnostic>,
+}
+
+impl CilError {
+    /// The first message that names a statement in one of the inputs:
+    /// usually the cause of the failure.
+    pub fn location(&self) -> Option<&CilDiagnostic> {
+        self.diagnostics.iter().find(|d| d.input.is_some())
+    }
+}
+
+impl std::fmt::Display for CilError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.diagnostics.is_empty() {
+            return f.write_str("libsepol gave no details");
+        }
+        for (i, diagnostic) in self.diagnostics.iter().enumerate() {
+            if i > 0 {
+                f.write_str("; ")?;
+            }
+            f.write_str(&diagnostic.message)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for CilError {}
+
+/// One error message from libsepol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CilDiagnostic {
+    /// The message as libsepol logged it, including its location.
+    pub message: String,
+    /// The input the message points at, by the name it was added under.
+    pub input: Option<String>,
+    /// The 1-based line in `input` the message points at.
+    pub line: Option<u32>,
+    /// The CIL statement starting on `line`, as written in `input`.
+    pub statement: Option<String>,
+}
 
 /// Read a file to a string, keeping the path in the error.
 pub(crate) fn read_to_string(path: &Path) -> Result<String> {

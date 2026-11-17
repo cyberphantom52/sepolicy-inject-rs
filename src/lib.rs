@@ -8,7 +8,7 @@ mod policy;
 pub mod rules;
 
 pub use cil::CilPolicy;
-pub use error::{Error, Result};
+pub use error::{CilDiagnostic, CilError, Error, Result};
 pub use extract::Extraction;
 pub use ffi::XPerm;
 pub use policy::SePolicy;
@@ -218,10 +218,23 @@ mod ffi {
 
         type CilPolicyImpl;
 
-        fn add_file(self: Pin<&mut CilPolicyImpl>, source: &str) -> bool;
+        // `errors` collects the error messages libsepol logs during the call.
+        fn add_file(
+            self: Pin<&mut CilPolicyImpl>,
+            name: &str,
+            source: &str,
+            errors: &mut Vec<String>,
+        ) -> bool;
         fn to_cil(self: &CilPolicyImpl, out: &mut String) -> bool;
-        fn validate(self: Pin<&mut CilPolicyImpl>) -> bool;
-        fn compile(self: Pin<&mut CilPolicyImpl>) -> UniquePtr<SePolicyImpl>;
+        fn validate(self: Pin<&mut CilPolicyImpl>, errors: &mut Vec<String>) -> bool;
+        fn compile(
+            self: Pin<&mut CilPolicyImpl>,
+            errors: &mut Vec<String>,
+        ) -> UniquePtr<SePolicyImpl>;
+        // The text of the input called `name`; empty if there is none.
+        fn source_text(self: &CilPolicyImpl, name: &str) -> &[u8];
+        // The name the next unnamed input gets.
+        fn next_name(self: &CilPolicyImpl) -> String;
         fn extract_label(self: &CilPolicyImpl, label: &str, out: &mut Vec<String>) -> bool;
         fn declared_types(self: &CilPolicyImpl, out: &mut Vec<String>) -> bool;
 

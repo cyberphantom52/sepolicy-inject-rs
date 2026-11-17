@@ -24,26 +24,80 @@ extern "C" {
 // Logging target for CIL operations
 static constexpr const char *CIL_LOG_TARGET = "sepolicy::cil";
 
-// Setup CIL log handler to route messages through Rust's tracing
+// libsepol logs one message across several calls: cil_tree_log sends the
+// text, then " at <input>:<line>", then any " from <file>:<line>", then "\n".
+// Pieces are joined here until the newline, so each message is logged, and
+// captured, as one line.
+struct CilLogState {
+  std::string pending;
+  int level = CIL_ERR;
+  // Where the current operation collects its error messages, if anywhere.
+  rust::Vec<rust::String> *errors = nullptr;
+};
+
+// Only the thread holding the libsepol lock reaches libsepol.
+static thread_local CilLogState cil_log_state;
+
+static void emit_cil_log(int lvl, std::string message) {
+  while (!message.empty() &&
+         (message.back() == '\n' || message.back() == '\r')) {
+    message.pop_back();
+  }
+  if (message.empty()) {
+    return;
+  }
+
+  if (lvl == CIL_ERR) {
+    log_error(CIL_LOG_TARGET, message);
+    if (cil_log_state.errors != nullptr) {
+      cil_log_state.errors->push_back(rust::String(message));
+    }
+  } else if (lvl == CIL_WARN) {
+    log_warn(CIL_LOG_TARGET, message);
+  } else if (lvl == CIL_INFO) {
+    log_info(CIL_LOG_TARGET, message);
+  } else {
+    log_debug(CIL_LOG_TARGET, message);
+  }
+}
+
+static void flush_cil_log() {
+  if (!cil_log_state.pending.empty()) {
+    emit_cil_log(cil_log_state.level, std::move(cil_log_state.pending));
+    cil_log_state.pending.clear();
+  }
+}
+
+// Route CIL log messages through Rust's tracing.
 static void setup_cil_logging() {
   cil_set_log_handler(+[](int lvl, const char *msg) {
-    // Remove trailing newline if present
-    std::string message(msg);
-    if (!message.empty() && message.back() == '\n') {
-      message.pop_back();
+    if (msg == nullptr) {
+      return;
     }
-
-    if (lvl == CIL_ERR) {
-      log_error(CIL_LOG_TARGET, message);
-    } else if (lvl == CIL_WARN) {
-      log_warn(CIL_LOG_TARGET, message);
-    } else if (lvl == CIL_INFO) {
-      log_info(CIL_LOG_TARGET, message);
-    } else {
-      log_debug(CIL_LOG_TARGET, message);
+    if (cil_log_state.pending.empty()) {
+      cil_log_state.level = lvl;
+    }
+    cil_log_state.pending += msg;
+    if (!cil_log_state.pending.empty() && cil_log_state.pending.back() == '\n') {
+      flush_cil_log();
     }
   });
 }
+
+// Collects the error messages libsepol logs while it is alive into `out`.
+class CilErrorCapture {
+public:
+  explicit CilErrorCapture(rust::Vec<rust::String> &out) {
+    flush_cil_log();
+    cil_log_state.errors = &out;
+  }
+  ~CilErrorCapture() {
+    flush_cil_log();
+    cil_log_state.errors = nullptr;
+  }
+  CilErrorCapture(const CilErrorCapture &) = delete;
+  CilErrorCapture &operator=(const CilErrorCapture &) = delete;
+};
 
 static void trim_trailing_newlines(std::string &text) noexcept {
   while (!text.empty() &&
@@ -390,24 +444,66 @@ std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept {
   return std::make_unique<CilPolicyImpl>();
 }
 
-bool CilPolicyImpl::add_file(rust::Str source) noexcept {
-  return add_file(source.data(), source.size());
+bool CilPolicyImpl::has_source(std::string_view name) const noexcept {
+  for (const auto &source : sources) {
+    if (source.first == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
-// Inputs are numbered within their policy, so a name depends only on how many
+// Inputs are numbered within their policy, so a name depends only on the
 // sources the policy already holds.
 std::string CilPolicyImpl::next_input_name() const {
-  return "input_" + std::to_string(sources.size() + 1) + ".cil";
+  for (size_t n = sources.size() + 1;; ++n) {
+    auto name = "input_" + std::to_string(n) + ".cil";
+    if (!has_source(name)) {
+      return name;
+    }
+  }
+}
+
+rust::Slice<const uint8_t>
+CilPolicyImpl::source_text(rust::Str name) const noexcept {
+  std::string_view wanted(name.data(), name.size());
+  for (const auto &source : sources) {
+    if (source.first == wanted) {
+      return {reinterpret_cast<const uint8_t *>(source.second.data()),
+              source.second.size()};
+    }
+  }
+  return {};
+}
+
+rust::String CilPolicyImpl::next_name() const noexcept {
+  return rust::String(next_input_name());
+}
+
+bool CilPolicyImpl::add_file(rust::Str name, rust::Str source,
+                             rust::Vec<rust::String> &errors) noexcept {
+  CilErrorCapture capture(errors);
+  return add_file(std::string(name.data(), name.size()), source.data(),
+                  source.size());
 }
 
 bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
-  auto name = next_input_name();
+  return add_file(next_input_name(), source, size);
+}
+
+bool CilPolicyImpl::add_file(std::string name, const char *source,
+                             size_t size) noexcept {
   log_trace(CIL_LOG_TARGET,
             std::string("Loading in-memory CIL source: ") + name);
 
   if (source == nullptr || size == 0) {
     log_error(CIL_LOG_TARGET,
               std::string("Refusing to load empty CIL source: ") + name);
+    return false;
+  }
+  if (name.empty() || has_source(name)) {
+    log_error(CIL_LOG_TARGET,
+              std::string("Refusing to load a second CIL source named: ") + name);
     return false;
   }
 
@@ -424,6 +520,17 @@ bool CilPolicyImpl::add_file(const char *source, size_t size) noexcept {
                 " (" + std::to_string(size) + " bytes)");
   sources.emplace_back(std::move(name), std::string(source, size));
   return true;
+}
+
+bool CilPolicyImpl::validate(rust::Vec<rust::String> &errors) noexcept {
+  CilErrorCapture capture(errors);
+  return validate();
+}
+
+std::unique_ptr<SePolicyImpl>
+CilPolicyImpl::compile(rust::Vec<rust::String> &errors) noexcept {
+  CilErrorCapture capture(errors);
+  return compile();
 }
 
 bool CilPolicyImpl::validate() noexcept {
