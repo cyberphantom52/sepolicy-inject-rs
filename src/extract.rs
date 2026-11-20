@@ -14,7 +14,9 @@ pub struct Extraction {
     /// leaving out names the receiving policy already defines.
     pub declarations: Vec<String>,
     /// Rules that name a selected type or attribute, every other name in them
-    /// being selected too or defined by the receiving policy.
+    /// being selected too or defined by the receiving policy, and the
+    /// `typeattribute` statements that put other types in a selected
+    /// attribute.
     pub rules: Vec<String>,
     /// Rules that would need a name neither selected nor defined by the
     /// receiving policy, by that name. A rule needing several is under each.
@@ -93,6 +95,27 @@ impl SePolicy {
                 }
             }
         };
+
+        // A selected attribute's members. A compiled policy keeps membership
+        // on each type, so a type that is not selected, or is selected but
+        // not declared here, would otherwise lose the attribute: `allow
+        // hal_x_client hal_x_service:...` would come with no client in it.
+        for decl in &types {
+            let name = decl.name.as_ref();
+            if chosen.contains(name) && !is_defined(name) {
+                continue;
+            }
+            for attribute in decl
+                .attributes
+                .iter()
+                .filter(|a| chosen.contains(a.as_ref()))
+            {
+                place(
+                    &[name, attribute],
+                    format!("typeattribute {name} {attribute};"),
+                );
+            }
+        }
 
         for rule in self.avtab_rules() {
             match &rule {
