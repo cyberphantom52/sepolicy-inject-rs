@@ -237,6 +237,7 @@ mod ffi {
         fn next_name(self: &CilPolicyImpl) -> String;
         fn extract_label(self: &CilPolicyImpl, label: &str, out: &mut Vec<String>) -> bool;
         fn declared_types(self: &CilPolicyImpl, out: &mut Vec<String>) -> bool;
+        fn remove_types(self: Pin<&mut CilPolicyImpl>, names: &[String]) -> bool;
 
         fn clone(self: &CilPolicyImpl) -> UniquePtr<CilPolicyImpl>;
 

@@ -276,6 +276,25 @@ impl CilPolicy {
         Ok(out.into_iter().collect())
     }
 
+    /// Remove the types, attributes and type aliases `names` from the sources:
+    /// every statement that names one, a declaration or a rule alike, except an
+    /// attribute set, which only loses those names, taken as empty sets. An
+    /// attribute set left empty goes too.
+    ///
+    /// ```
+    /// let policy = sepolicy::CilPolicy::new()
+    ///     .add_file("(type a)(type b)(typeattribute t)(typeattributeset t (a b))(allow a b (file (read)))")?
+    ///     .remove_types(&["a".to_owned()])?;
+    /// assert_eq!(policy.declared_types()?.into_iter().collect::<Vec<_>>(), ["b", "t"]);
+    /// # Ok::<(), sepolicy::Error>(())
+    /// ```
+    pub fn remove_types(mut self, names: &[String]) -> Result<Self> {
+        if !self.with_mut(|p| p.remove_types(names)) {
+            return Err(Error::CilRemove);
+        }
+        Ok(self)
+    }
+
     /// Write the loaded CIL database back out as merged CIL source.
     pub fn write(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();

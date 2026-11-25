@@ -65,6 +65,9 @@ pub enum Error {
     #[error("failed to read the CIL policy's declarations")]
     CilDeclarations,
 
+    #[error("failed to remove types from the CIL policy")]
+    CilRemove,
+
     #[error("failed to render policy patch into CIL")]
     CilRender,
 

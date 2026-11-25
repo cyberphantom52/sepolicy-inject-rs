@@ -66,6 +66,7 @@ public:
   std::unique_ptr<SePolicyImpl> compile() noexcept;
   bool extract_label(rust::Str label, rust::Vec<rust::String> &out) const noexcept;
   bool declared_types(rust::Vec<rust::String> &out) const noexcept;
+  bool remove_types(rust::Slice<const rust::String> names) noexcept;
 };
 
 std::unique_ptr<CilPolicyImpl> cil_new_impl() noexcept;
